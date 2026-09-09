@@ -1,0 +1,36 @@
+name: Build GymApp iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Scarica il progetto
+        uses: actions/checkout@v4
+
+      - name: Compila app
+        run: |
+          xcodebuild \
+            -project GymApp.xcodeproj \
+            -scheme GymApp \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Crea IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/GymApp.app Payload/
+          zip -r GymApp-unsigned.ipa Payload
+
+      - name: Salva IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GymApp-IPA
+          path: GymApp-unsigned.ipa
