@@ -23,7 +23,7 @@
         A00000100000000000000004 /* WorkoutStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutStore.swift; sourceTree = "<group>"; };
         A00000100000000000000005 /* MuscleMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleMapView.swift; sourceTree = "<group>"; };
         A00000100000000000000006 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-        A00000100000000000000007 /* mappa.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg+xml; path = mappa.svg; sourceTree = "<group>"; };
+        A00000100000000000000007 /* mappa.svg */ = {isa = PBXFileReference; lastKnownFileType = "image.svg+xml"; path = mappa.svg; sourceTree = "<group>"; };
         A00000100000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
         A00000100000000000000009 /* GymApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GymApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
