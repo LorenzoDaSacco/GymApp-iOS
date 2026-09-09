@@ -37,7 +37,7 @@ final class WorkoutStore: ObservableObject {
         let r = ExerciseRecognizer.recognize(name)
         var e = Exercise(day: day, name: name, group: r.group, focus: r.focus, target: r.target,
                          reps: reps, numberOfSets: numberOfSets)
-        e.sets = e.sets.map { WorkoutSet(reps: reps, weight: weight) }
+        e.sets = e.sets.map { _ in WorkoutSet(reps: reps, weight: weight) }
         exercises.append(e)
         selectedDay = day
     }
