@@ -5,20 +5,37 @@ struct ContentView: View {
     @EnvironmentObject private var store: WorkoutStore
     @AppStorage("gymapp.dark") private var darkMode = true
     @State private var showAdd = false
-
+    @State private var selectedTab = 0
     var body: some View {
-        TabView {
-            NavigationStack { dashboard }
-                .tabItem { Label("Allenamento", systemImage: "dumbbell.fill") }
-            NavigationStack { AddExerciseView() }
-                .tabItem { Label("Aggiungi", systemImage: "plus.circle.fill") }
-            NavigationStack { SettingsView(darkMode: $darkMode) }
-                .tabItem { Label("Impostazioni", systemImage: "gearshape.fill") }
-        }
-        .tint(.red)
-        .preferredColorScheme(darkMode ? .dark : .light)
-        .sheet(isPresented: $showAdd) { AddExerciseView() }
+        TabView(selection: $selectedTab) {
+
+    NavigationStack {
+        dashboard
     }
+    .tabItem {
+        Label("Allenamento", systemImage: "dumbbell.fill")
+    }
+    .tag(0)
+
+    NavigationStack {
+        AddExerciseView(selectedTab: $selectedTab)
+    }
+    .tabItem {
+        Label("Aggiungi", systemImage: "plus.circle.fill")
+    }
+    .tag(1)
+
+    NavigationStack {
+        SettingsView(
+            darkMode: $darkMode,
+            selectedTab: $selectedTab
+        )
+    }
+    .tabItem {
+        Label("Impostazioni", systemImage: "gearshape.fill")
+    }
+    .tag(2)
+}
 
     private var dashboard: some View {
         ScrollView {
