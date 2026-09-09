@@ -46,6 +46,7 @@
             );
             sourceTree = "<group>";
         };
+
         A00000300000000000000002 /* GymApp */ = {
             isa = PBXGroup;
             children = (
@@ -61,6 +62,7 @@
             path = GymApp;
             sourceTree = "<group>";
         };
+
         A00000300000000000000003 /* Products */ = {
             isa = PBXGroup;
             children = (
@@ -102,7 +104,6 @@
                 };
             };
             buildConfigurationList = A00000500000000000000002;
-            compatibilityVersion = "Xcode 14.0";
             developmentRegion = en;
             hasScannedForEncodings = 0;
             knownRegions = (en, Base);
@@ -162,6 +163,7 @@
             };
             name = Debug;
         };
+
         A00000700000000000000002 /* Release */ = {
             isa = XCBuildConfiguration;
             buildSettings = {
@@ -181,6 +183,7 @@
             };
             name = Release;
         };
+
         A00000700000000000000003 /* Project Debug */ = {
             isa = XCBuildConfiguration;
             buildSettings = {
@@ -200,11 +203,11 @@
             };
             name = Debug;
         };
+
         A00000700000000000000004 /* Project Release */ = {
             isa = XCBuildConfiguration;
             buildSettings = {
                 ALWAYS_SEARCH_USER_PATHS = NO;
-                CLANG_ENABLE_MODULES = YES;
                 COPY_PHASE_STRIP = NO;
                 DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
                 ENABLE_NS_ASSERTIONS = NO;
@@ -227,6 +230,7 @@
             defaultConfigurationIsVisible = 0;
             defaultConfigurationName = Release;
         };
+
         A00000500000000000000002 /* Build configuration list for PBXProject */ = {
             isa = XCConfigurationList;
             buildConfigurations = (
