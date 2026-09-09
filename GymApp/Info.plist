@@ -4,14 +4,22 @@
 <dict>
     <key>CFBundleDisplayName</key>
     <string>GymApp</string>
+
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+
     <key>CFBundleIdentifier</key>
     <string>com.example.GymApp</string>
+
     <key>CFBundleName</key>
     <string>GymApp</string>
+
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+
     <key>UILaunchScreen</key>
     <dict/>
+
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
