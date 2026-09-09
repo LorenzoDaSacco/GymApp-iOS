@@ -5,7 +5,7 @@ import WebKit
 struct MuscleMapView: UIViewRepresentable {
     let target: MuscleTarget
     func makeUIView(context: Context) -> WKWebView {
-        let v=WKWebView(); v.isOpaque=false; v.backgroundColor=.clear
+        let v = WKWebView(); v.isOpaque = false; v.backgroundColor = .clear
         v.scrollView.isScrollEnabled=false; v.scrollView.bounces=false
         return v
     }
