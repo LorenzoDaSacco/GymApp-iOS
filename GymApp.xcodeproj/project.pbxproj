@@ -3,7 +3,7 @@
     archiveVersion = 1;
     classes = {
     };
-    objectVersion = 56;
+    objectVersion = 77;
     objects = {
 
 /* Begin PBXBuildFile section */
@@ -107,6 +107,7 @@
             hasScannedForEncodings = 0;
             knownRegions = (en, Base);
             mainGroup = A00000300000000000000001;
+            preferredProjectObjectVersion = 77;
             productRefGroup = A00000300000000000000003 /* Products */;
             projectDirPath = "";
             projectRoot = "";
