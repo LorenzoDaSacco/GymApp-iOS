@@ -6,12 +6,11 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-
     steps:
       - name: Scarica il progetto
         uses: actions/checkout@v4
 
-      - name: Compila app
+      - name: Compila app e widget
         run: |
           xcodebuild \
             -project GymApp.xcodeproj \
@@ -23,10 +22,15 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Crea IPA
+      - name: Crea IPA con widget
         run: |
+          rm -rf Payload
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/GymApp.app Payload/
+          mkdir -p Payload/GymApp.app/PlugIns
+          if [ -d build/Build/Products/Release-iphoneos/GymWidgets.appex ]; then
+            cp -R build/Build/Products/Release-iphoneos/GymWidgets.appex Payload/GymApp.app/PlugIns/
+          fi
           zip -r GymApp-unsigned.ipa Payload
 
       - name: Salva IPA
