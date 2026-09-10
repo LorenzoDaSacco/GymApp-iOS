@@ -27,6 +27,24 @@ final class WorkoutStore: ObservableObject {
         exercises[ei].sets[si].weight = weight
         if saveHistory && old != weight { exercises[ei].sets[si].history.append(WeightLog(weight: weight)) }
     }
+
+    func weight(exerciseID: UUID, setIndex: Int) -> Double {
+        guard let exercise = exercises.first(where: { $0.id == exerciseID }), exercise.sets.indices.contains(setIndex) else { return 0 }
+        return exercise.sets[setIndex].weight
+    }
+
+    /// Imposta il peso della serie indicata al 20% in meno rispetto alla serie precedente.
+    /// Il valore è una pianificazione, quindi non viene aggiunto allo storico finché l'utente non lo modifica/conferma.
+    func applyBackOff20(exerciseID: UUID, setIndex: Int) {
+        guard let ei = exercises.firstIndex(where: { $0.id == exerciseID }),
+              setIndex > 0,
+              exercises[ei].sets.indices.contains(setIndex),
+              exercises[ei].sets.indices.contains(setIndex - 1) else { return }
+
+        let previous = exercises[ei].sets[setIndex - 1].weight
+        guard previous > 0 else { return }
+        exercises[ei].sets[setIndex].weight = (previous * 0.8 * 2).rounded() / 2
+    }
     func saveWeightHistory(weight: Double, exerciseID: UUID, setID: UUID) { updateWeight(weight, exerciseID: exerciseID, setID: setID, saveHistory: true) }
 
     func toggle(_ exerciseID: UUID, setID: UUID) {

@@ -4,10 +4,52 @@ import PhotosUI
 import PDFKit
 import UIKit
 
+enum AccentColorOption: String, CaseIterable, Identifiable {
+    case purple, blue, green, orange, red, pink
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .purple: return "Viola"
+        case .blue: return "Blu"
+        case .green: return "Verde"
+        case .orange: return "Arancione"
+        case .red: return "Rosso"
+        case .pink: return "Rosa"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .purple: return .purple
+        case .blue: return .blue
+        case .green: return .green
+        case .orange: return .orange
+        case .red: return .red
+        case .pink: return .pink
+        }
+    }
+}
+
+private struct GymAccentColorKey: EnvironmentKey {
+    static let defaultValue: Color = .purple
+}
+
+extension EnvironmentValues {
+    var gymAccentColor: Color {
+        get { self[GymAccentColorKey.self] }
+        set { self[GymAccentColorKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: WorkoutStore
     @AppStorage("gymapp.darkMode") private var darkMode = true
+    @AppStorage("gymapp.accentColor") private var accentColorName = AccentColorOption.purple.rawValue
     @State private var showingImporter = false
+
+    private var accentColor: Color { AccentColorOption(rawValue: accentColorName)?.color ?? .purple }
 
     var body: some View {
         TabView {
@@ -27,17 +69,19 @@ struct ContentView: View {
             .tabItem { Label("Aggiungi", systemImage: "plus.circle") }
 
             NavigationStack {
-                SettingsView(store: store, darkMode: $darkMode)
+                SettingsView(store: store, darkMode: $darkMode, accentColorName: $accentColorName)
             }
             .tabItem { Label("Impostazioni", systemImage: "gearshape") }
         }
         .sheet(isPresented: $showingImporter) { SheetImportView(store: store) }
-        .tint(.purple)
+        .tint(accentColor)
+        .environment(\.gymAccentColor, accentColor)
         .preferredColorScheme(darkMode ? .dark : .light)
     }
 }
 
 struct DashboardView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @Binding var showImporter: Bool
 
@@ -52,7 +96,7 @@ struct DashboardView: View {
                         Image(systemName: "camera.fill")
                             .font(.title3)
                             .padding(10)
-                            .background(.purple.opacity(0.15), in: .circle)
+                            .background(accentColor.opacity(0.15), in: .circle)
                     }
                 }
 
@@ -69,7 +113,7 @@ struct DashboardView: View {
                 }
 
                 SwiftUI.ProgressView(value: store.totalSets == 0 ? 0 : Double(store.completedSets) / Double(store.totalSets))
-                    .tint(.purple)
+                    .tint(accentColor)
 
                 if store.dayExercises.isEmpty {
                     EmptyDayView()
@@ -118,6 +162,7 @@ struct EmptyDayView: View {
 }
 
 struct ExerciseCard: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
     @State private var editing = false
@@ -130,7 +175,7 @@ struct ExerciseCard: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(exercise.name).font(.headline)
-                    Text(exercise.group).font(.caption.bold()).foregroundStyle(.purple)
+                    Text(exercise.group).font(.caption.bold()).foregroundStyle(accentColor)
                     Text(exercise.focus).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -150,7 +195,7 @@ struct ExerciseCard: View {
                 Text(exercise.target.title)
                     .font(.caption2)
                     .padding(7)
-                    .background(.purple.opacity(0.12), in: Capsule())
+                    .background(accentColor.opacity(0.12), in: Capsule())
             }
 
             ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
@@ -181,11 +226,12 @@ struct ExerciseCard: View {
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.purple.opacity(0.15)))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(accentColor.opacity(0.15)))
     }
 }
 
 struct SetRow: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
     let index: Int
@@ -220,6 +266,22 @@ struct SetRow: View {
             .onSubmit { commitWeight() }
             .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
 
+            Text("kg")
+                .font(.caption.bold())
+                .foregroundStyle(accentColor)
+                .frame(width: 22, alignment: .leading)
+
+            if editing && index > 0 {
+                Button("Back-off −20%") {
+                    store.applyBackOff20(exerciseID: exercise.id, setIndex: index)
+                    weightText[set.id] = String(format: "%.1f", store.weight(exerciseID: exercise.id, setIndex: index))
+                        .replacingOccurrences(of: ".0", with: "")
+                }
+                .font(.caption2.bold())
+                .buttonStyle(.bordered)
+                .tint(accentColor)
+            }
+
             Button { store.toggle(exercise.id, setID: set.id) } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
@@ -250,6 +312,7 @@ struct SetRow: View {
 // MARK: - PROGRESSI
 
 struct AnalyticsView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @State private var selectedDay: String?
 
@@ -292,6 +355,7 @@ struct AnalyticsView: View {
 }
 
 struct DayProgressCard: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let day: String
     let action: () -> Void
@@ -308,7 +372,7 @@ struct DayProgressCard: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(day).font(.title3.bold())
-                        Text(workoutName(for: day)).font(.caption.bold()).foregroundStyle(.purple)
+                        Text(workoutName(for: day)).font(.caption.bold()).foregroundStyle(accentColor)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -356,11 +420,12 @@ struct SummaryPill: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.purple.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
 struct DayProgressView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let day: String
 
@@ -376,7 +441,7 @@ struct DayProgressView: View {
                         HStack(spacing: 12) {
                             Image(systemName: icon(for: exercise.target))
                                 .frame(width: 28)
-                                .foregroundStyle(.purple)
+                                .foregroundStyle(accentColor)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(exercise.name).font(.headline)
                                 Text("\(exercise.sets.count) serie • \(exercise.target.title)")
@@ -448,13 +513,13 @@ struct ExerciseHistoryView: View {
                             y: .value("Kg", item.weight)
                         )
                         .interpolationMethod(.catmullRom)
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(accentColor)
 
                         PointMark(
                             x: .value("Data", item.date),
                             y: .value("Kg", item.weight)
                         )
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(accentColor)
                     }
                     .chartYScale(domain: 0...300)
                     .chartYAxis {
@@ -503,6 +568,7 @@ struct ExerciseHistoryView: View {
 }
 
 struct DetailMetric: View {
+    @Environment(\.gymAccentColor) private var accentColor
     let title: String
     let value: String
 
@@ -513,13 +579,14 @@ struct DetailMetric: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(.purple.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
 // MARK: - AGGIUNGI
 
 struct AddExerciseView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @State private var name = ""
     @State private var reps = "8-10"
@@ -572,6 +639,7 @@ struct AddExerciseView: View {
 // MARK: - IMPORTA SCHEDA
 
 struct SheetImportView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @StateObject private var importer = SheetImporter()
     @Environment(\.dismiss) private var dismiss
@@ -644,13 +712,28 @@ struct SheetImportView: View {
 // MARK: - IMPOSTAZIONI
 
 struct SettingsView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @Binding var darkMode: Bool
+    @Binding var accentColorName: String
 
     var body: some View {
         Form {
             Section("Aspetto") {
                 Toggle("Tema scuro", isOn: $darkMode)
+
+                Picker("Colore principale", selection: $accentColorName) {
+                    ForEach(AccentColorOption.allCases) { option in
+                        HStack {
+                            Circle()
+                                .fill(option.color)
+                                .frame(width: 12, height: 12)
+                            Text(option.title)
+                        }
+                        .tag(option.rawValue)
+                    }
+                }
+
                 HStack {
                     Text("Tema attuale")
                     Spacer()
