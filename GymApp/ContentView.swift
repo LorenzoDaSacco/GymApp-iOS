@@ -198,6 +198,19 @@ struct ExerciseCard: View {
                     .background(accentColor.opacity(0.12), in: Capsule())
             }
 
+            if editing {
+                Toggle(isOn: Binding(
+                    get: { exercise.backOffEnabled },
+                    set: { store.setBackOffEnabled($0, exerciseID: exercise.id) }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Back-off ultima serie").font(.caption.bold())
+                        Text("Ultima serie = 80% della serie precedente").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(accentColor)
+            }
+
             ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
                 SetRow(
                     store: store,
@@ -252,34 +265,40 @@ struct SetRow: View {
             .frame(width: 75)
             .disabled(!editing)
 
-            TextField("kg", text: Binding(
-                get: {
-                    weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
-                },
-                set: { weightText[set.id] = $0 }
-            ))
-            .keyboardType(.decimalPad)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 75)
-            .focused(focused, equals: set.id)
-            .disabled(!editing)
-            .onSubmit { commitWeight() }
-            .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
-
-            Text("kg")
-                .font(.caption.bold())
-                .foregroundStyle(accentColor)
-                .frame(width: 22, alignment: .leading)
-
-            if editing && index > 0 {
-                Button("Back-off −20%") {
-                    store.applyBackOff20(exerciseID: exercise.id, setIndex: index)
-                    weightText[set.id] = String(format: "%.1f", store.weight(exerciseID: exercise.id, setIndex: index))
-                        .replacingOccurrences(of: ".0", with: "")
+            if set.isBackOff {
+                HStack(spacing: 6) {
+                    Text(format(store.backOffWeight(exerciseID: exercise.id)))
+                        .font(.body.bold())
+                        .frame(width: 75, alignment: .trailing)
+                    Text("kg")
+                        .font(.caption.bold())
+                        .foregroundStyle(accentColor)
+                    Text("Back-off −20%")
+                        .font(.caption2.bold())
+                        .foregroundStyle(accentColor)
                 }
-                .font(.caption2.bold())
-                .buttonStyle(.bordered)
-                .tint(accentColor)
+                .padding(.vertical, 9)
+                .padding(.horizontal, 8)
+                .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                TextField("kg", text: Binding(
+                    get: {
+                        weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
+                    },
+                    set: { weightText[set.id] = $0 }
+                ))
+                .keyboardType(.decimalPad)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 75)
+                .focused(focused, equals: set.id)
+                .disabled(!editing)
+                .onSubmit { commitWeight() }
+                .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
+
+                Text("kg")
+                    .font(.caption.bold())
+                    .foregroundStyle(accentColor)
+                    .frame(width: 22, alignment: .leading)
             }
 
             Button { store.toggle(exercise.id, setID: set.id) } label: {
@@ -295,6 +314,10 @@ struct SetRow: View {
                 Button("Fine") { focused.wrappedValue = nil }
             }
         }
+    }
+
+    private func format(_ v: Double) -> String {
+        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
     }
 
     private func commitWeight() {
@@ -595,6 +618,7 @@ struct AddExerciseView: View {
     @State private var sets = 3
     @State private var recovery = "2:00"
     @State private var weights: [String] = ["20", "20", "20"]
+    @State private var backOffEnabled = false
     @FocusState private var field: Bool
 
     var body: some View {
@@ -607,7 +631,7 @@ struct AddExerciseView: View {
             Section("Esercizio") {
                 TextField("Nome", text: $name).focused($field)
                 TextField("Ripetizioni", text: $reps)
-                Stepper("Serie: \(sets)", value: $sets, in: 1...20)
+                Stepper("Serie normali: \(sets)", value: $sets, in: 1...20)
                     .onChange(of: sets) { newValue in
                         if weights.count < newValue {
                             weights += Array(repeating: "20", count: newValue - weights.count)
@@ -615,16 +639,31 @@ struct AddExerciseView: View {
                             weights = Array(weights.prefix(newValue))
                         }
                     }
+                Toggle("Aggiungi back-off −20%", isOn: $backOffEnabled)
+                    .tint(accentColor)
                 TextField("Recupero (es. 2:00)", text: $recovery)
             }
-            Section("Kg per serie") {
+            Section("Kg per serie normale") {
                 ForEach(0..<weights.count, id: \.self) { i in
                     TextField("Serie \(i + 1)", text: $weights[i]).keyboardType(.decimalPad)
+                }
+                if backOffEnabled {
+                    let previous = Double(weights.last?.replacingOccurrences(of: ",", with: ".") ?? "") ?? 0
+                    HStack {
+                        Text("Back-off — ultima serie")
+                        Spacer()
+                        Text("\(formatWeight(previous * 0.8)) kg")
+                            .foregroundStyle(accentColor)
+                            .font(.body.bold())
+                    }
+                    Text("Il peso del back-off è automatico e non modificabile: 20% in meno rispetto all'ultima serie normale.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             Button("Aggiungi alla scheda") {
                 let ws = weights.map { Double($0.replacingOccurrences(of: ",", with: ".")) ?? 0 }
-                store.addExercise(day: store.selectedDay, name: name, reps: reps, weights: ws, recovery: recovery)
+                store.addExercise(day: store.selectedDay, name: name, reps: reps, weights: ws, recovery: recovery, backOffEnabled: backOffEnabled)
                 name = ""
             }
         }
@@ -635,6 +674,10 @@ struct AddExerciseView: View {
             }
         }
         .navigationTitle("Aggiungi esercizio")
+    }
+
+    private func formatWeight(_ v: Double) -> String {
+        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
     }
 }
 
