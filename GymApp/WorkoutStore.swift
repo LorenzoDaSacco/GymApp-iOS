@@ -97,7 +97,7 @@ final class WorkoutStore: ObservableObject {
     }
     func addSet(to exerciseID: UUID) {
         guard let i = exercises.firstIndex(where: {$0.id == exerciseID}) else { return }
-        if exercises[i].backOffEnabled, let backOff = exercises[i].sets.popLast() {
+        if exercises[i].backOffEnabled, var backOff = exercises[i].sets.popLast() {
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
             exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
             backOff.isBackOff = true
