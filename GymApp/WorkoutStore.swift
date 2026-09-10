@@ -21,7 +21,9 @@ final class WorkoutStore: ObservableObject {
         "MARTEDÌ",
         "MERCOLEDÌ",
         "GIOVEDÌ",
-        "VENERDÌ"
+        "VENERDÌ",
+        "SABATO",
+        "DOMENICA"
     ]
 
     private let key = "gymapp.native.v5"
