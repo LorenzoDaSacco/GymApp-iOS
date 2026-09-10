@@ -4,12 +4,27 @@ import Combine
 @MainActor
 final class WorkoutStore: ObservableObject {
 
-    @Published var selectedDay = "LUNEDÌ" { didSet { save() } }
-    @Published var exercises: [Exercise] = [] { didSet { save() } }
+    @Published var selectedDay = "LUNEDÌ" {
+        didSet {
+            save()
+        }
+    }
 
-    let days = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ"]
+    @Published var exercises: [Exercise] = [] {
+        didSet {
+            save()
+        }
+    }
 
-    private let key = "gymapp.native.v4"
+    let days = [
+        "LUNEDÌ",
+        "MARTEDÌ",
+        "MERCOLEDÌ",
+        "GIOVEDÌ",
+        "VENERDÌ"
+    ]
+
+    private let key = "gymapp.native.v5"
 
     init() {
         load()
@@ -20,11 +35,15 @@ final class WorkoutStore: ObservableObject {
     }
 
     var dayExercises: [Exercise] {
-        exercises.filter { $0.day == selectedDay }
+        exercises.filter {
+            $0.day == selectedDay
+        }
     }
 
     var totalSets: Int {
-        dayExercises.reduce(0) { $0 + $1.sets.count }
+        dayExercises.reduce(0) {
+            $0 + $1.sets.count
+        }
     }
 
     var completedSets: Int {
@@ -33,24 +52,84 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
-    func updateWeight(_ weight: Double, exerciseID: UUID, setID: UUID) {
-        guard let ei = exercises.firstIndex(where: { $0.id == exerciseID }),
-              let si = exercises[ei].sets.firstIndex(where: { $0.id == setID })
-        else { return }
+    // MARK: - PESI
 
-        exercises[ei].sets[si].weight = weight
+    func updateWeight(
+        _ weight: Double,
+        exerciseID: UUID,
+        setID: UUID,
+        saveHistory: Bool = true
+    ) {
+        guard
+            let exerciseIndex = exercises.firstIndex(
+                where: { $0.id == exerciseID }
+            ),
+            let setIndex = exercises[exerciseIndex].sets.firstIndex(
+                where: { $0.id == setID }
+            )
+        else {
+            return
+        }
+
+        let oldWeight =
+            exercises[exerciseIndex].sets[setIndex].weight
+
+        exercises[exerciseIndex].sets[setIndex].weight = weight
+
+        // Salviamo lo storico solo quando l'utente
+        // conferma realmente il nuovo peso.
+        if saveHistory && oldWeight != weight {
+            exercises[exerciseIndex]
+                .sets[setIndex]
+                .history
+                .append(
+                    WeightLog(
+                        date: Date(),
+                        weight: weight
+                    )
+                )
+        }
     }
 
-    func toggle(_ exerciseID: UUID, setID: UUID) {
-        guard let ei = exercises.firstIndex(where: { $0.id == exerciseID }),
-              let si = exercises[ei].sets.firstIndex(where: { $0.id == setID })
-        else { return }
+    func saveWeightHistory(
+        weight: Double,
+        exerciseID: UUID,
+        setID: UUID
+    ) {
+        updateWeight(
+            weight,
+            exerciseID: exerciseID,
+            setID: setID,
+            saveHistory: true
+        )
+    }
+
+    // MARK: - SERIE
+
+    func toggle(
+        _ exerciseID: UUID,
+        setID: UUID
+    ) {
+        guard
+            let ei = exercises.firstIndex(
+                where: { $0.id == exerciseID }
+            ),
+            let si = exercises[ei].sets.firstIndex(
+                where: { $0.id == setID }
+            )
+        else {
+            return
+        }
 
         exercises[ei].sets[si].completed.toggle()
     }
 
     func addSet(to exerciseID: UUID) {
-        guard let index = exercises.firstIndex(where: { $0.id == exerciseID }) else {
+        guard
+            let index = exercises.firstIndex(
+                where: { $0.id == exerciseID }
+            )
+        else {
             return
         }
 
@@ -65,14 +144,19 @@ final class WorkoutStore: ObservableObject {
     }
 
     func removeSet(from exerciseID: UUID) {
-        guard let index = exercises.firstIndex(where: { $0.id == exerciseID }),
-              exercises[index].sets.count > 1
+        guard
+            let index = exercises.firstIndex(
+                where: { $0.id == exerciseID }
+            ),
+            exercises[index].sets.count > 1
         else {
             return
         }
 
         exercises[index].sets.removeLast()
     }
+
+    // MARK: - ESERCIZI
 
     func addExercise(
         day: String,
@@ -93,7 +177,10 @@ final class WorkoutStore: ObservableObject {
         )
 
         exercise.sets = weights.map {
-            WorkoutSet(reps: reps, weight: $0)
+            WorkoutSet(
+                reps: reps,
+                weight: $0
+            )
         }
 
         exercises.append(exercise)
@@ -101,34 +188,76 @@ final class WorkoutStore: ObservableObject {
     }
 
     func remove(_ exercise: Exercise) {
-        exercises.removeAll { $0.id == exercise.id }
+        exercises.removeAll {
+            $0.id == exercise.id
+        }
     }
 
+    // MARK: - RESET
+
     func resetDay() {
-        for i in exercises.indices where exercises[i].day == selectedDay {
+        for i in exercises.indices
+        where exercises[i].day == selectedDay {
+
             for j in exercises[i].sets.indices {
                 exercises[i].sets[j].completed = false
             }
         }
     }
 
+    // MARK: - ANALYTICS
+
+    func history(for exercise: Exercise) -> [WeightLog] {
+        exercise.sets
+            .flatMap { $0.history }
+            .sorted {
+                $0.date < $1.date
+            }
+    }
+
+    func maxWeight(for exercise: Exercise) -> Double {
+        let history = history(for: exercise)
+
+        if let maximum = history.map(\.weight).max() {
+            return max(
+                maximum,
+                exercise.sets.map(\.weight).max() ?? 0
+            )
+        }
+
+        return exercise.sets.map(\.weight).max() ?? 0
+    }
+
+    // MARK: - SALVATAGGIO
+
     private func save() {
         guard let data = try? JSONEncoder().encode(exercises) else {
             return
         }
 
-        UserDefaults.standard.set(data, forKey: key)
+        UserDefaults.standard.set(
+            data,
+            forKey: key
+        )
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([Exercise].self, from: data)
+        guard
+            let data = UserDefaults.standard.data(
+                forKey: key
+            ),
+            let decoded = try? JSONDecoder().decode(
+                [Exercise].self,
+                from: data
+            )
         else {
             return
         }
 
         exercises = decoded
     }
+
+    // MARK: - SCHEDA INIZIALE
 
     private static func initialSchedule() -> [Exercise] {
 
@@ -158,67 +287,227 @@ final class WorkoutStore: ObservableObject {
         return [
 
             // LUNEDÌ
-            e("LUNEDÌ", "Spinte manubri panca 32", "7-9", 3,
-              "PETTO (ALTO)", "Pettorali superiori e tricipiti", .chest, "2:00"),
+            e(
+                "LUNEDÌ",
+                "Spinte manubri panca 32",
+                "7-9",
+                3,
+                "PETTO (ALTO)",
+                "Pettorali superiori e tricipiti",
+                .chest,
+                "2:00"
+            ),
 
-            e("LUNEDÌ", "Lat Pulldown", "7-9", 3,
-              "DORSO", "Gran dorsale e bicipiti", .back, "2:00"),
+            e(
+                "LUNEDÌ",
+                "Lat Pulldown",
+                "7-9",
+                3,
+                "DORSO",
+                "Gran dorsale e bicipiti",
+                .back,
+                "2:00"
+            ),
 
-            e("LUNEDÌ", "Chest Press", "8-10", 3,
-              "PETTO", "Pettorali e tricipiti", .chest, "2:00"),
+            e(
+                "LUNEDÌ",
+                "Chest Press",
+                "8-10",
+                3,
+                "PETTO",
+                "Pettorali e tricipiti",
+                .chest,
+                "2:00"
+            ),
 
-            e("LUNEDÌ", "T-Bar prona larga", "8-10", 3,
-              "DORSO", "Dorsali, romboidi e trapezio", .back, "1:30"),
+            e(
+                "LUNEDÌ",
+                "T-Bar prona larga",
+                "8-10",
+                3,
+                "DORSO",
+                "Dorsali, romboidi e trapezio",
+                .back,
+                "1:30"
+            ),
 
-            e("LUNEDÌ", "Alzate laterali", "10-12", 3,
-              "SPALLE", "Deltoide laterale", .shoulders, "1:30"),
+            e(
+                "LUNEDÌ",
+                "Alzate laterali",
+                "10-12",
+                3,
+                "SPALLE",
+                "Deltoide laterale",
+                .shoulders,
+                "1:30"
+            ),
 
-            e("LUNEDÌ", "Push Down asta curva", "10 RM", 3,
-              "TRICIPITI", "Tricipiti", .triceps, "1:30"),
+            e(
+                "LUNEDÌ",
+                "Push Down asta curva",
+                "10 RM",
+                3,
+                "TRICIPITI",
+                "Tricipiti",
+                .triceps,
+                "1:30"
+            ),
 
-            e("LUNEDÌ", "Curl cavo basso", "10 RM", 3,
-              "BICIPITI", "Bicipiti", .biceps, "1:30"),
+            e(
+                "LUNEDÌ",
+                "Curl cavo basso",
+                "10 RM",
+                3,
+                "BICIPITI",
+                "Bicipiti",
+                .biceps,
+                "1:30"
+            ),
 
             // MARTEDÌ
-            e("MARTEDÌ", "Leg Extension", "12 RM", 3,
-              "QUADRICIPITI", "Quadricipiti", .quads, "1:30"),
+            e(
+                "MARTEDÌ",
+                "Leg Extension",
+                "12 RM",
+                3,
+                "QUADRICIPITI",
+                "Quadricipiti",
+                .quads,
+                "1:30"
+            ),
 
-            e("MARTEDÌ", "Leg Press 45", "7-9", 3,
-              "GAMBE", "Quadricipiti e glutei", .quads, "2:00"),
+            e(
+                "MARTEDÌ",
+                "Leg Press 45",
+                "7-9",
+                3,
+                "GAMBE",
+                "Quadricipiti e glutei",
+                .quads,
+                "2:00"
+            ),
 
-            e("MARTEDÌ", "Leg Curl sdraiato", "10-12", 2,
-              "FEMORALI", "Femorali", .hamstrings, "1:30"),
+            e(
+                "MARTEDÌ",
+                "Leg Curl sdraiato",
+                "10-12",
+                2,
+                "FEMORALI",
+                "Femorali",
+                .hamstrings,
+                "1:30"
+            ),
 
-            e("MARTEDÌ", "Adduttori", "10-12", 2,
-              "ADDUTTORI", "Adduttori", .hamstrings, "1:30"),
+            e(
+                "MARTEDÌ",
+                "Adduttori",
+                "10-12",
+                2,
+                "ADDUTTORI",
+                "Adduttori",
+                .hamstrings,
+                "1:30"
+            ),
 
-            e("MARTEDÌ", "Calf Machine", "8-10", 3,
-              "POLPACCI", "Polpacci", .quads, "1:30"),
+            e(
+                "MARTEDÌ",
+                "Calf Machine",
+                "8-10",
+                3,
+                "POLPACCI",
+                "Polpacci",
+                .quads,
+                "1:30"
+            ),
 
             // MERCOLEDÌ
-            e("MERCOLEDÌ", "Panca piana bilanciere", "7-8", 4,
-              "PETTO", "Pettorali e tricipiti", .chest, "2:30"),
+            e(
+                "MERCOLEDÌ",
+                "Panca piana bilanciere",
+                "7-8",
+                4,
+                "PETTO",
+                "Pettorali e tricipiti",
+                .chest,
+                "2:30"
+            ),
 
-            e("MERCOLEDÌ", "Rematore bilanciere", "7-9", 3,
-              "DORSO", "Dorsali, romboidi e bicipiti", .back, "2:30"),
+            e(
+                "MERCOLEDÌ",
+                "Rematore bilanciere",
+                "7-9",
+                3,
+                "DORSO",
+                "Dorsali, romboidi e bicipiti",
+                .back,
+                "2:30"
+            ),
 
-            e("MERCOLEDÌ", "Lento avanti manubri panca 71", "8-10", 3,
-              "SPALLE", "Deltoidi e tricipiti", .shoulders, "2:00"),
+            e(
+                "MERCOLEDÌ",
+                "Lento avanti manubri panca 71",
+                "8-10",
+                3,
+                "SPALLE",
+                "Deltoidi e tricipiti",
+                .shoulders,
+                "2:00"
+            ),
 
-            e("MERCOLEDÌ", "Rowing", "8-10", 3,
-              "DORSO", "Dorsali e romboidi", .back, "1:30"),
+            e(
+                "MERCOLEDÌ",
+                "Rowing",
+                "8-10",
+                3,
+                "DORSO",
+                "Dorsali e romboidi",
+                .back,
+                "1:30"
+            ),
 
-            e("MERCOLEDÌ", "Stacchi rumeni manubri", "7-9", 3,
-              "FEMORALI / GLUTEI", "Catena posteriore e glutei", .hamstrings, "2:00"),
+            e(
+                "MERCOLEDÌ",
+                "Stacchi rumeni manubri",
+                "7-9",
+                3,
+                "FEMORALI / GLUTEI",
+                "Catena posteriore e glutei",
+                .hamstrings,
+                "2:00"
+            ),
 
-            e("MERCOLEDÌ", "Leg Curl seduto", "12 RM", 2,
-              "FEMORALI", "Femorali", .hamstrings, "1:30"),
+            e(
+                "MERCOLEDÌ",
+                "Leg Curl seduto",
+                "12 RM",
+                2,
+                "FEMORALI",
+                "Femorali",
+                .hamstrings,
+                "1:30"
+            ),
 
-            e("MERCOLEDÌ", "Arm Curl", "10 RM", 3,
-              "BICIPITI", "Bicipiti", .biceps, "1:30"),
+            e(
+                "MERCOLEDÌ",
+                "Arm Curl",
+                "10 RM",
+                3,
+                "BICIPITI",
+                "Bicipiti",
+                .biceps,
+                "1:30"
+            ),
 
-            e("MERCOLEDÌ", "French Press manubri", "10 RM", 3,
-              "TRICIPITI", "Tricipiti", .triceps, "1:30")
+            e(
+                "MERCOLEDÌ",
+                "French Press manubri",
+                "10 RM",
+                3,
+                "TRICIPITI",
+                "Tricipiti",
+                .triceps,
+                "1:30"
+            )
         ]
     }
 }
