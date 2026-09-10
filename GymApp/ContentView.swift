@@ -35,7 +35,7 @@ struct DashboardView: View {
     }
 }
 struct Metric: View { let title:String; let value:String; let icon:String; var body:some View{VStack(alignment:.leading,spacing:5){Image(systemName:icon);Text(value).font(.title2.bold());Text(title).font(.caption).foregroundStyle(.secondary)}.frame(maxWidth:.infinity,alignment:.leading).padding().background(.thinMaterial,in:RoundedRectangle(cornerRadius:18))} }
-struct EmptyDayView: View { var body:some View{ContentUnavailableView("Giorno libero","Aggiungi gli esercizi che vuoi per questo giorno.",systemImage:"calendar.badge.plus")} }
+struct EmptyDayView: View { var body:some View{ContentUnavailableView("Giorno libero", systemImage: "calendar.badge.plus", description: Text("Aggiungi gli esercizi che vuoi per questo giorno."))} }
 
 struct ExerciseCard: View {
     @ObservedObject var store: WorkoutStore
