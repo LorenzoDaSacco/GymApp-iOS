@@ -410,6 +410,7 @@ struct DayProgressCard: View {
 }
 
 struct SummaryPill: View {
+    @Environment(\.gymAccentColor) private var accentColor
     let value: String
     let label: String
 
@@ -480,6 +481,7 @@ struct DayProgressView: View {
 }
 
 struct ExerciseHistoryView: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
 
