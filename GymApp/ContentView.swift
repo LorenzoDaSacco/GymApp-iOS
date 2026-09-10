@@ -26,7 +26,7 @@ struct ContentView: View {
             .tag(0)
 
             NavigationStack {
-                ProgressView()
+                AnalyticsView()
             }
             .tabItem {
                 Label(
@@ -139,7 +139,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal)
 
-                ProgressView(
+                SwiftUI.ProgressView(
                     value: store.totalSets == 0
                     ? 0
                     : Double(store.completedSets)
@@ -589,7 +589,7 @@ struct ExerciseCard: View {
 
 // MARK: - PROGRESSI
 
-struct ProgressView: View {
+struct AnalyticsView: View {
 
     @EnvironmentObject private var store: WorkoutStore
 
