@@ -8,6 +8,25 @@ struct ExerciseRecognition {
 }
 
 enum ExerciseRecognizer {
+    /// True when the exercise belongs to the built-in personal/gym registry.
+    /// Generic recognition is still available, but unknown names ask the user to choose a muscle.
+    static func isKnownExercise(_ raw: String) -> Bool {
+        let s = normalize(raw)
+        let registry = [
+            // Registro personale
+            "spinte manubri panca 32", "lat pulldown", "chest press", "t bar prona larga",
+            "alzate laterali", "push down asta curva", "curl cavo basso", "leg extension",
+            "leg press 45", "leg curl sdraiato", "adduttori", "calf machine",
+            "panca piana bilanciere", "rematore bilanciere", "lento avanti manubri panca 71",
+            "rowing", "stacchi rumeni manubri", "leg curl seduto", "arm curl", "french press manubri",
+            // Registro generico riconosciuto automaticamente
+            "panca inclinata", "panca piana", "lat machine", "rematore", "lento avanti",
+            "alzate", "curl", "pushdown", "french press", "leg press", "leg extension",
+            "leg curl", "stacco"
+        ]
+        return registry.contains(where: { s.contains($0) })
+    }
+
     static func recognize(_ raw: String) -> ExerciseRecognition {
         let s = normalize(raw)
         let personal: [(String,String,String,MuscleTarget)] = [

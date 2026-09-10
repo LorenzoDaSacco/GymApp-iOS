@@ -5,7 +5,7 @@ import PDFKit
 import UIKit
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
-    case purple, blue, green, orange, red, pink
+    case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
 
     var id: String { rawValue }
 
@@ -17,6 +17,10 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         case .orange: return "Arancione"
         case .red: return "Rosso"
         case .pink: return "Rosa"
+        case .teal: return "Turchese"
+        case .yellow: return "Giallo"
+        case .indigo: return "Indaco"
+        case .mint: return "Menta"
         }
     }
 
@@ -28,6 +32,10 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         case .orange: return .orange
         case .red: return .red
         case .pink: return .pink
+        case .teal: return .teal
+        case .yellow: return .yellow
+        case .indigo: return .indigo
+        case .mint: return .mint
         }
     }
 }
@@ -48,30 +56,35 @@ struct ContentView: View {
     @AppStorage("gymapp.darkMode") private var darkMode = true
     @AppStorage("gymapp.accentColor") private var accentColorName = AccentColorOption.purple.rawValue
     @State private var showingImporter = false
+    @State private var selectedTab = 0
 
     private var accentColor: Color { AccentColorOption(rawValue: accentColorName)?.color ?? .purple }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             NavigationStack {
                 DashboardView(store: store, showImporter: $showingImporter)
             }
             .tabItem { Label("Scheda", systemImage: "list.bullet.clipboard") }
+            .tag(0)
 
             NavigationStack {
                 AnalyticsView(store: store)
             }
             .tabItem { Label("Progressi", systemImage: "chart.line.uptrend.xyaxis") }
+            .tag(1)
 
             NavigationStack {
-                AddExerciseView(store: store)
+                AddExerciseView(store: store) { selectedTab = 0 }
             }
             .tabItem { Label("Aggiungi", systemImage: "plus.circle") }
+            .tag(2)
 
             NavigationStack {
                 SettingsView(store: store, darkMode: $darkMode, accentColorName: $accentColorName)
             }
             .tabItem { Label("Impostazioni", systemImage: "gearshape") }
+            .tag(3)
         }
         .sheet(isPresented: $showingImporter) { SheetImportView(store: store) }
         .tint(accentColor)
@@ -168,6 +181,7 @@ struct ExerciseCard: View {
     @State private var editing = false
     @State private var weightText: [UUID: String] = [:]
     @State private var repsText: [UUID: String] = [:]
+    @State private var showingDeleteConfirmation = false
     @FocusState private var focused: UUID?
 
     var body: some View {
@@ -199,6 +213,14 @@ struct ExerciseCard: View {
             }
 
             if editing {
+                Button(role: .destructive) {
+                    showingDeleteConfirmation = true
+                } label: {
+                    Label("Elimina esercizio", systemImage: "trash")
+                        .font(.subheadline.bold())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 Toggle(isOn: Binding(
                     get: { exercise.backOffEnabled },
                     set: { store.setBackOffEnabled($0, exerciseID: exercise.id) }
@@ -240,6 +262,12 @@ struct ExerciseCard: View {
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(accentColor.opacity(0.15)))
+        .alert("Eliminare esercizio?", isPresented: $showingDeleteConfirmation) {
+            Button("Elimina", role: .destructive) { store.remove(exercise) }
+            Button("Annulla", role: .cancel) {}
+        } message: {
+            Text("L'esercizio e tutte le sue serie verranno rimossi dalla scheda.")
+        }
     }
 }
 
@@ -613,13 +641,20 @@ struct DetailMetric: View {
 struct AddExerciseView: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
+    let onAdded: () -> Void
     @State private var name = ""
     @State private var reps = "8-10"
     @State private var sets = 3
     @State private var recovery = "2:00"
     @State private var weights: [String] = ["20", "20", "20"]
     @State private var backOffEnabled = false
+    @State private var selectedMuscle: MuscleTarget = .fullBody
     @FocusState private var field: Bool
+
+    private var needsMuscleSelection: Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !ExerciseRecognizer.isKnownExercise(trimmed)
+    }
 
     var body: some View {
         Form {
@@ -641,6 +676,20 @@ struct AddExerciseView: View {
                     }
                 Toggle("Aggiungi back-off −20%", isOn: $backOffEnabled)
                     .tint(accentColor)
+                if needsMuscleSelection {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Esercizio non presente nel registro")
+                            .font(.caption.bold())
+                        Picker("Muscolo principale", selection: $selectedMuscle) {
+                            ForEach(MuscleTarget.allCases, id: \.self) { muscle in
+                                Text(muscle.title).tag(muscle)
+                            }
+                        }
+                        Text("Scegli il muscolo principale per completare la mappa muscolare e i progressi.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 TextField("Recupero (es. 2:00)", text: $recovery)
             }
             Section("Kg per serie normale") {
@@ -662,9 +711,19 @@ struct AddExerciseView: View {
                 }
             }
             Button("Aggiungi alla scheda") {
+                let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedName.isEmpty else { return }
                 let ws = weights.map { Double($0.replacingOccurrences(of: ",", with: ".")) ?? 0 }
-                store.addExercise(day: store.selectedDay, name: name, reps: reps, weights: ws, recovery: recovery, backOffEnabled: backOffEnabled)
+                store.addExercise(day: store.selectedDay, name: trimmedName, reps: reps, weights: ws, recovery: recovery, backOffEnabled: backOffEnabled, manualTarget: needsMuscleSelection ? selectedMuscle : nil)
+                field = false
+                onAdded()
                 name = ""
+                reps = "8-10"
+                sets = 3
+                recovery = "2:00"
+                weights = ["20", "20", "20"]
+                backOffEnabled = false
+                selectedMuscle = .fullBody
             }
         }
         .toolbar {

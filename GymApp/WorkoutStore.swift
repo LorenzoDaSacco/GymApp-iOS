@@ -122,10 +122,13 @@ final class WorkoutStore: ObservableObject {
     func setReps(_ reps: String, exerciseID: UUID, setID: UUID) { guard let ei=exercises.firstIndex(where:{$0.id==exerciseID}), let si=exercises[ei].sets.firstIndex(where:{$0.id==setID}) else{return}; exercises[ei].sets[si].reps=reps }
     func setRecovery(_ recovery: String, exerciseID: UUID) { guard let i=exercises.firstIndex(where:{$0.id==exerciseID}) else{return}; exercises[i].recovery=recovery }
     func moveExercise(_ exerciseID: UUID, day: String) { guard let i=exercises.firstIndex(where:{$0.id==exerciseID}) else{return}; exercises[i].day=day }
-    func addExercise(day:String,name:String,reps:String,weights:[Double],recovery:String="",backOffEnabled: Bool = false) {
+    func addExercise(day:String,name:String,reps:String,weights:[Double],recovery:String="",backOffEnabled: Bool = false, manualTarget: MuscleTarget? = nil) {
         let r=ExerciseRecognizer.recognize(name)
+        let target = manualTarget ?? r.target
+        let group = manualTarget == nil ? r.group : target.title
+        let focus = manualTarget == nil ? r.focus : "Focus: \(target.title) · Inserito manualmente"
         let regularWeights = weights.isEmpty ? [20] : weights
-        var e=Exercise(day:day,name:name,group:r.group,focus:r.focus,target:r.target,reps:reps,numberOfSets:regularWeights.count,recovery:recovery,backOffEnabled:backOffEnabled)
+        var e=Exercise(day:day,name:name,group:group,focus:focus,target:target,reps:reps,numberOfSets:regularWeights.count,recovery:recovery,backOffEnabled:backOffEnabled)
         e.sets=regularWeights.map{WorkoutSet(reps:reps,weight:$0)}
         if backOffEnabled {
             let source = e.sets.last ?? WorkoutSet(reps: reps, weight: 20)
