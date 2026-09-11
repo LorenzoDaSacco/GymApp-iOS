@@ -37,7 +37,7 @@ struct SchedaOggiWidgetView: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text(exercise.name).font(.caption.bold()).lineLimit(1)
                         Spacer()
-                        Text("\(exercise.sets.count)×\(exercise.sets.first?.reps ?? \"\")")
+                        Text("\(exercise.sets.count)×\(exercise.sets.first?.reps ?? "")")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
