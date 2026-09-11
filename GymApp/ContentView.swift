@@ -196,21 +196,12 @@ struct ExerciseCard: View {
                 Button(editing ? "Fine" : "Modifica") { editing.toggle() }
             }
 
-            HStack {
-                Text("Recupero").font(.caption.bold())
-                TextField("2:00", text: Binding(
-                    get: { exercise.recovery },
-                    set: { store.setRecovery($0, exerciseID: exercise.id) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 90)
-                .disabled(!editing)
-                Spacer()
-                Text(exercise.target.title)
-                    .font(.caption2)
-                    .padding(7)
-                    .background(accentColor.opacity(0.12), in: Capsule())
-            }
+            RecoveryTimerSection(
+                store: store,
+                exercise: exercise,
+                editing: editing,
+                accentColor: accentColor
+            )
 
             if editing {
                 Button(role: .destructive) {
@@ -268,6 +259,94 @@ struct ExerciseCard: View {
         } message: {
             Text("L'esercizio e tutte le sue serie verranno rimossi dalla scheda.")
         }
+    }
+}
+
+struct RecoveryTimerSection: View {
+    @ObservedObject var store: WorkoutStore
+    let exercise: Exercise
+    let editing: Bool
+    let accentColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Text("Recupero")
+                    .font(.caption.bold())
+
+                TextField("2:00", text: Binding(
+                    get: { exercise.recovery },
+                    set: { store.setRecovery($0, exerciseID: exercise.id) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 90)
+                .disabled(!editing)
+
+                Spacer()
+
+                Text(exercise.target.title)
+                    .font(.caption2)
+                    .padding(7)
+                    .background(accentColor.opacity(0.12), in: Capsule())
+            }
+
+            if let setID = activeTimerSetID {
+                RecoveryCountdownView(
+                    setID: setID,
+                    duration: RecoveryNotifications.seconds(from: exercise.recovery) ?? 0,
+                    accentColor: accentColor
+                )
+            }
+        }
+    }
+
+    private var activeTimerSetID: UUID? {
+        let now = Date()
+        return exercise.sets
+            .filter { $0.completed }
+            .compactMap { set -> (UUID, Date)? in
+                guard let endDate = RecoveryNotifications.shared.endDate(for: set.id), endDate > now else { return nil }
+                return (set.id, endDate)
+            }
+            .max(by: { $0.1 < $1.1 })?.0
+    }
+}
+
+struct RecoveryCountdownView: View {
+    let setID: UUID
+    let duration: TimeInterval
+    let accentColor: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let endDate = RecoveryNotifications.shared.endDate(for: setID)
+            let remaining = max(0, (endDate ?? context.date).timeIntervalSince(context.date))
+            let progress = duration > 0 ? min(1, max(0, remaining / duration)) : 0
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(remaining > 0 ? formattedTime(remaining) : "PRONTO")
+                        .font(.system(.headline, design: .monospaced).bold())
+                        .foregroundStyle(remaining > 0 ? .primary : accentColor)
+                    Spacer()
+                    Text(remaining > 0 ? "Tempo restante" : "Puoi ripartire")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                ProgressView(value: progress, total: 1)
+                    .tint(accentColor)
+                    .scaleEffect(x: 1, y: 1.35, anchor: .center)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func formattedTime(_ seconds: TimeInterval) -> String {
+        let total = Int(ceil(seconds))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

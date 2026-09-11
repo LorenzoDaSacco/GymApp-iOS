@@ -92,8 +92,11 @@ final class WorkoutStore: ObservableObject {
         let willComplete = !exercises[ei].sets[si].completed
         exercises[ei].sets[si].completed = willComplete
         let exercise = exercises[ei]
-        if willComplete { RecoveryNotifications.shared.start(for: setID, exerciseName: exercise.name, recovery: exercise.recovery) }
-        else { RecoveryNotifications.shared.cancel(for: setID) }
+        if willComplete {
+            RecoveryNotifications.shared.start(for: setID, exerciseName: exercise.name, recovery: exercise.recovery)
+        } else {
+            RecoveryNotifications.shared.cancel(for: setID)
+        }
     }
     func addSet(to exerciseID: UUID) {
         guard let i = exercises.firstIndex(where: {$0.id == exerciseID}) else { return }
