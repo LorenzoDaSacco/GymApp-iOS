@@ -1,6 +1,6 @@
-import ActivityKit
 import Foundation
 import UserNotifications
+import ActivityKit
 
 @MainActor
 final class RecoveryNotifications {
@@ -32,55 +32,19 @@ final class RecoveryNotifications {
         center.removePendingNotificationRequests(withIdentifiers: [id])
         center.add(request)
         saveEndDate(endDate, for: setID)
-        startLiveActivity(for: setID, exerciseName: exerciseName, duration: seconds, endDate: endDate)
+
+        startLiveActivity(setID: setID, exerciseName: exerciseName, recovery: recovery, endDate: endDate)
         return endDate
     }
 
     func cancel(for setID: UUID) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationID(for: setID)])
         removeEndDate(for: setID)
-        endLiveActivity(for: setID)
+        endLiveActivity(setID: setID)
     }
 
     func endDate(for setID: UUID) -> Date? {
         storedEndDates()[setID.uuidString].flatMap(Date.init(timeIntervalSince1970:))
-    }
-
-    private func startLiveActivity(for setID: UUID, exerciseName: String, duration: TimeInterval, endDate: Date) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-
-        Task {
-            // Only one recovery Live Activity is shown at a time.
-            for activity in Activity<RecoveryActivityAttributes>.activities {
-                await activity.end(nil, dismissalPolicy: .immediate)
-            }
-
-            let attributes = RecoveryActivityAttributes(
-                setID: setID,
-                exerciseName: exerciseName,
-                duration: duration
-            )
-            let state = RecoveryActivityAttributes.ContentState(endDate: endDate)
-            let content = ActivityContent(state: state, staleDate: endDate)
-
-            do {
-                _ = try Activity.request(
-                    attributes: attributes,
-                    content: content,
-                    pushType: nil
-                )
-            } catch {
-                // The local notification remains the fallback if Live Activities are unavailable.
-            }
-        }
-    }
-
-    private func endLiveActivity(for setID: UUID) {
-        Task {
-            for activity in Activity<RecoveryActivityAttributes>.activities where activity.attributes.setID == setID {
-                await activity.end(nil, dismissalPolicy: .immediate)
-            }
-        }
     }
 
     static func seconds(from text: String) -> TimeInterval? {
@@ -92,6 +56,40 @@ final class RecoveryNotifications {
         }
         if let n = Double(raw.replacingOccurrences(of: ",", with: ".")) { return n * 60 }
         return nil
+    }
+
+    private func startLiveActivity(setID: UUID, exerciseName: String, recovery: String, endDate: Date) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+
+        // Avoid leaving an old activity alive for the same set if the timer is restarted.
+        endLiveActivity(setID: setID)
+
+        let attributes = RecoveryActivityAttributes(setID: setID.uuidString)
+        let state = RecoveryActivityAttributes.ContentState(
+            endDate: endDate,
+            exerciseName: exerciseName,
+            recoveryText: recovery
+        )
+
+        do {
+            _ = try Activity<RecoveryActivityAttributes>.request(
+                attributes: attributes,
+                content: ActivityContent(state: state, staleDate: endDate),
+                pushType: nil
+            )
+        } catch {
+            // Live Activities are an enhancement; the local notification still works.
+        }
+    }
+
+    private func endLiveActivity(setID: UUID) {
+        let id = setID.uuidString
+        let activities = Activity<RecoveryActivityAttributes>.activities
+        for activity in activities where activity.attributes.setID == id {
+            Task {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
+        }
     }
 
     private func notificationID(for setID: UUID) -> String {

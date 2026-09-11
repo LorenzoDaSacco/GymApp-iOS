@@ -1,5 +1,6 @@
 import WidgetKit
 import SwiftUI
+import ActivityKit
 
 struct GymDayEntry: TimelineEntry {
     let date: Date
@@ -36,7 +37,7 @@ struct SchedaOggiWidgetView: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text(exercise.name).font(.caption.bold()).lineLimit(1)
                         Spacer()
-                        Text("\(exercise.sets.count)×\(exercise.sets.first?.reps ?? "")")
+                        Text("\(exercise.sets.count)×\(exercise.sets.first?.reps ?? \"\")")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
@@ -46,6 +47,72 @@ struct SchedaOggiWidgetView: View {
                 }
             }
         }.padding()
+    }
+}
+
+struct RecoveryLiveActivityView: View {
+    let context: ActivityViewContext<RecoveryActivityAttributes>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "timer")
+                Text("RECUPERO").font(.caption.bold())
+                Spacer()
+                Text(context.state.exerciseName).font(.caption).lineLimit(1)
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                Text(timerInterval: Date()...context.state.endDate, countsDown: true)
+                    .font(.system(size: 30, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                Spacer()
+                Text("restante").font(.caption).foregroundStyle(.secondary)
+            }
+
+            ProgressView(timerInterval: Date()...context.state.endDate, countsDown: true)
+                .tint(.red)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .activityBackgroundTint(Color.black.opacity(0.92))
+        .activitySystemActionForegroundColor(.white)
+    }
+}
+
+struct RecoveryLiveActivityWidget: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: RecoveryActivityAttributes.self) { context in
+            RecoveryLiveActivityView(context: context)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    Image(systemName: "timer")
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    Text("RECUPERO").font(.caption.bold())
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    Text(timerInterval: Date()...context.state.endDate, countsDown: true)
+                        .font(.system(.caption, design: .monospaced).bold())
+                        .monospacedDigit()
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    ProgressView(timerInterval: Date()...context.state.endDate, countsDown: true)
+                        .tint(.red)
+                }
+            } compactLeading: {
+                Image(systemName: "timer")
+            } compactTrailing: {
+                Text(timerInterval: Date()...context.state.endDate, countsDown: true)
+                    .font(.system(size: 12, design: .monospaced).bold())
+                    .monospacedDigit()
+            } minimal: {
+                Image(systemName: "timer")
+            }
+            .widgetURL(nil)
+            .keylineTint(.red)
+        }
     }
 }
 
@@ -65,6 +132,6 @@ struct SchedaOggiWidget: Widget {
 struct GymWidgetsBundle: WidgetBundle {
     var body: some Widget {
         SchedaOggiWidget()
-        RecoveryLiveActivity()
+        RecoveryLiveActivityWidget()
     }
 }
