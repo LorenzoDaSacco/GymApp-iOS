@@ -63,5 +63,8 @@ struct SchedaOggiWidget: Widget {
 
 @main
 struct GymWidgetsBundle: WidgetBundle {
-    var body: some Widget { SchedaOggiWidget() }
+    var body: some Widget {
+        SchedaOggiWidget()
+        RecoveryLiveActivity()
+    }
 }
