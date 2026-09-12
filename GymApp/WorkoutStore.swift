@@ -1,8 +1,5 @@
 import Foundation
 import Combine
-#if canImport(WidgetKit)
-import WidgetKit
-#endif
 
 @MainActor
 final class WorkoutStore: ObservableObject {
@@ -101,19 +98,12 @@ final class WorkoutStore: ObservableObject {
     func addSet(to exerciseID: UUID) {
         guard let i = exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
 
-        // IMPORTANT: never rebuild/replace the existing array when adding a set.
-        // This preserves every existing set, including its individual weight,
-        // repetitions, completion state and history.
+        // Non ricostruire le serie esistenti: aggiungiamo solamente una nuova serie.
+        // In questo modo ID, pesi, storico e stato delle serie precedenti restano intatti.
         if exercises[i].backOffEnabled {
             let backOff = exercises[i].sets.removeLast()
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
-
-            // Keep every existing regular set exactly as it is and append only
-            // the new regular set.
-            exercises[i].sets.append(
-                WorkoutSet(reps: source.reps, weight: source.weight)
-            )
-
+            exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
             var newBackOff = backOff
             newBackOff.completed = false
             newBackOff.isBackOff = true
@@ -121,9 +111,7 @@ final class WorkoutStore: ObservableObject {
             refreshBackOff(i)
         } else {
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
-            exercises[i].sets.append(
-                WorkoutSet(reps: source.reps, weight: source.weight)
-            )
+            exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
         }
     }
 
@@ -166,9 +154,6 @@ final class WorkoutStore: ObservableObject {
         guard let data=try? JSONEncoder().encode(exercises) else{return}
         UserDefaults.standard.set(data,forKey:key)
         if let shared=GymShared.defaults() { shared.set(data,forKey:key) }
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadAllTimelines()
-        #endif
     }
     private func load() {
         let standard = UserDefaults.standard.data(forKey:key) ?? UserDefaults.standard.data(forKey:legacyKey)

@@ -238,8 +238,8 @@ struct ExerciseCard: View {
             }
 
             HStack {
-                Button("+ Serie") { store.addSet(to: exercise.id) }.buttonStyle(.bordered)
-                Button("− Serie") { store.removeSet(from: exercise.id) }.buttonStyle(.bordered)
+                Button("+ Serie") { commitAllWeights(); focused = nil; store.addSet(to: exercise.id) }.buttonStyle(.bordered)
+                Button("− Serie") { commitAllWeights(); focused = nil; store.removeSet(from: exercise.id) }.buttonStyle(.bordered)
                 Spacer()
                 Text("\(exercise.sets.count) serie")
                     .font(.caption)
@@ -258,6 +258,16 @@ struct ExerciseCard: View {
             Button("Annulla", role: .cancel) {}
         } message: {
             Text("L'esercizio e tutte le sue serie verranno rimossi dalla scheda.")
+        }
+    }
+
+    private func commitAllWeights() {
+        for set in exercise.sets where !set.isBackOff {
+            guard let raw = weightText[set.id] else { continue }
+            let normalized = raw.replacingOccurrences(of: ",", with: ".")
+            if let value = Double(normalized) {
+                store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
+            }
         }
     }
 }
@@ -390,14 +400,12 @@ struct SetRow: View {
             } else {
                 TextField("kg", text: Binding(
                     get: {
-                        weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
+                        weightText[set.id] ?? format(set.weight)
                     },
-                    set: {
-                        weightText[set.id] = $0
-                        let normalized = $0.replacingOccurrences(of: ",", with: ".")
-                        if let value = Double(normalized) {
-                            store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-                        }
+                    set: { newValue in
+                        // Il testo resta locale durante la digitazione: così non salviamo
+                        // l'intero allenamento ad ogni singolo carattere e l'app resta fluida.
+                        weightText[set.id] = newValue
                     }
                 ))
                 .keyboardType(.decimalPad)
@@ -407,6 +415,13 @@ struct SetRow: View {
                 .disabled(!editing)
                 .onSubmit { commitWeight() }
                 .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
+                .onChange(of: set.weight) { newValue in
+                    // Se una nuova serie viene aggiunta, il testo delle serie esistenti
+                    // viene riallineato al modello senza cancellare il peso.
+                    if focused.wrappedValue != set.id {
+                        weightText[set.id] = format(newValue)
+                    }
+                }
 
                 Text("kg")
                     .font(.caption.bold())
@@ -414,7 +429,7 @@ struct SetRow: View {
                     .frame(width: 22, alignment: .leading)
             }
 
-            Button { store.toggle(exercise.id, setID: set.id) } label: {
+            Button { commitWeight(); focused.wrappedValue = nil; store.toggle(exercise.id, setID: set.id) } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
             }
@@ -434,14 +449,18 @@ struct SetRow: View {
     }
 
     private func commitWeight() {
-        let raw = weightText[set.id] ?? ""
-        let normalized = raw.replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized) else {
-            if raw.isEmpty { store.updateWeight(0, exerciseID: exercise.id, setID: set.id, saveHistory: false) }
+        let raw = weightText[set.id] ?? format(set.weight)
+        let normalized = raw.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Un campo peso non può restare senza numero: se l'utente cancella
+        // tutto e chiude la tastiera, ripristiniamo il valore precedente.
+        guard !normalized.isEmpty, let value = Double(normalized), value >= 0 else {
+            weightText[set.id] = format(set.weight)
             return
         }
+
         store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-        weightText[set.id] = String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
+        weightText[set.id] = format(value)
     }
 }
 
