@@ -392,7 +392,13 @@ struct SetRow: View {
                     get: {
                         weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
                     },
-                    set: { weightText[set.id] = $0 }
+                    set: {
+                        weightText[set.id] = $0
+                        let normalized = $0.replacingOccurrences(of: ",", with: ".")
+                        if let value = Double(normalized) {
+                            store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
+                        }
+                    }
                 ))
                 .keyboardType(.decimalPad)
                 .textFieldStyle(.roundedBorder)

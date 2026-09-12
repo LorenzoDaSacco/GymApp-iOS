@@ -99,16 +99,31 @@ final class WorkoutStore: ObservableObject {
         }
     }
     func addSet(to exerciseID: UUID) {
-        guard let i = exercises.firstIndex(where: {$0.id == exerciseID}) else { return }
-        if exercises[i].backOffEnabled, var backOff = exercises[i].sets.popLast() {
+        guard let i = exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
+
+        // IMPORTANT: never rebuild/replace the existing array when adding a set.
+        // This preserves every existing set, including its individual weight,
+        // repetitions, completion state and history.
+        if exercises[i].backOffEnabled {
+            let backOff = exercises[i].sets.removeLast()
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
-            exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
-            backOff.isBackOff = true
-            exercises[i].sets.append(backOff)
+
+            // Keep every existing regular set exactly as it is and append only
+            // the new regular set.
+            exercises[i].sets.append(
+                WorkoutSet(reps: source.reps, weight: source.weight)
+            )
+
+            var newBackOff = backOff
+            newBackOff.completed = false
+            newBackOff.isBackOff = true
+            exercises[i].sets.append(newBackOff)
             refreshBackOff(i)
         } else {
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
-            exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
+            exercises[i].sets.append(
+                WorkoutSet(reps: source.reps, weight: source.weight)
+            )
         }
     }
 
