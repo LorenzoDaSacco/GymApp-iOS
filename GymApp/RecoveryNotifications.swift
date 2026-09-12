@@ -7,7 +7,7 @@ final class RecoveryNotifications {
     static let shared = RecoveryNotifications()
     private init() {}
 
-    private let endDatesKey = "gym.recovery.endDates.v1"
+    private let endDatesKey = "gym.recovery.endDates.v2"
 
     func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -15,7 +15,10 @@ final class RecoveryNotifications {
 
     @discardableResult
     func start(for setID: UUID, exerciseName: String, recovery: String) -> Date? {
-        guard let seconds = Self.seconds(from: recovery), seconds > 0 else { return nil }
+        // Every completed set gets a recovery timer. If an exercise has no recovery
+        // value yet, use the same safe default shown by the UI instead of silently failing.
+        let recoveryText = recovery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "2:00" : recovery
+        guard let seconds = Self.seconds(from: recoveryText), seconds > 0 else { return nil }
 
         let id = notificationID(for: setID)
         let endDate = Date().addingTimeInterval(seconds)
@@ -27,13 +30,12 @@ final class RecoveryNotifications {
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [id])
         center.add(request)
-        saveEndDate(endDate, for: setID)
 
-        startLiveActivity(setID: setID, exerciseName: exerciseName, recovery: recovery, endDate: endDate)
+        saveEndDate(endDate, for: setID)
+        startLiveActivity(setID: setID, exerciseName: exerciseName, recovery: recoveryText, endDate: endDate)
         return endDate
     }
 
@@ -52,16 +54,21 @@ final class RecoveryNotifications {
         guard !raw.isEmpty else { return nil }
         if raw.contains(":") {
             let parts = raw.split(separator: ":").compactMap { Double($0) }
-            if parts.count == 2 { return parts[0] * 60 + parts[1] }
+            if parts.count == 2 {
+                return parts[0] * 60 + parts[1]
+            }
         }
-        if let n = Double(raw.replacingOccurrences(of: ",", with: ".")) { return n * 60 }
+        if let n = Double(raw.replacingOccurrences(of: ",", with: ".")) {
+            return n * 60
+        }
         return nil
     }
 
     private func startLiveActivity(setID: UUID, exerciseName: String, recovery: String, endDate: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
-        // Avoid leaving an old activity alive for the same set if the timer is restarted.
+        // One Live Activity per completed set. Starting Wednesday, Saturday, etc.
+        // follows exactly the same path as Monday; there is intentionally no day check.
         endLiveActivity(setID: setID)
 
         let attributes = RecoveryActivityAttributes(setID: setID.uuidString)
@@ -78,14 +85,13 @@ final class RecoveryNotifications {
                 pushType: nil
             )
         } catch {
-            // Live Activities are an enhancement; the local notification still works.
+            // Local notification remains active even if Live Activities are disabled.
         }
     }
 
     private func endLiveActivity(setID: UUID) {
         let id = setID.uuidString
-        let activities = Activity<RecoveryActivityAttributes>.activities
-        for activity in activities where activity.attributes.setID == id {
+        for activity in Activity<RecoveryActivityAttributes>.activities where activity.attributes.setID == id {
             Task {
                 await activity.end(nil, dismissalPolicy: .immediate)
             }

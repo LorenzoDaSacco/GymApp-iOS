@@ -1,10 +1,13 @@
 import Foundation
 import Combine
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 @MainActor
 final class WorkoutStore: ObservableObject {
-    @Published var selectedDay = "LUNEDÌ" { didSet { save() } }
-    @Published var exercises: [Exercise] = [] { didSet { save() } }
+    @Published var selectedDay = "LUNEDÌ"
+    @Published var exercises: [Exercise] = []
     let days = ["LUNEDÌ","MARTEDÌ","MERCOLEDÌ","GIOVEDÌ","VENERDÌ","SABATO","DOMENICA"]
     private let key = GymShared.workoutsKey
     private let legacyKey = GymShared.legacyKey
@@ -12,7 +15,10 @@ final class WorkoutStore: ObservableObject {
     init() {
         load()
         RecoveryNotifications.shared.requestPermission()
-        if exercises.isEmpty { exercises = Self.initialSchedule() }
+        if exercises.isEmpty {
+            exercises = Self.initialSchedule()
+            persist()
+        }
     }
     var dayExercises: [Exercise] { exercises.filter { $0.day == selectedDay } }
     var totalSets: Int { dayExercises.reduce(0) { $0 + $1.sets.count } }
@@ -29,6 +35,7 @@ final class WorkoutStore: ObservableObject {
             exercises[ei].sets[si].history.append(WeightLog(weight: weight))
         }
         refreshBackOff(ei)
+        persist()
     }
 
     func weight(exerciseID: UUID, setIndex: Int) -> Double {
@@ -56,12 +63,14 @@ final class WorkoutStore: ObservableObject {
             exercises[ei].sets.append(backOff)
             exercises[ei].backOffEnabled = true
             refreshBackOff(ei)
+            persist()
         } else {
             guard exercises[ei].backOffEnabled else { return }
             if let removed = exercises[ei].sets.popLast() {
                 RecoveryNotifications.shared.cancel(for: removed.id)
             }
             exercises[ei].backOffEnabled = false
+            persist()
         }
     }
 
@@ -88,31 +97,28 @@ final class WorkoutStore: ObservableObject {
         guard let ei = exercises.firstIndex(where: {$0.id == exerciseID}), let si = exercises[ei].sets.firstIndex(where: {$0.id == setID}) else { return }
         let willComplete = !exercises[ei].sets[si].completed
         exercises[ei].sets[si].completed = willComplete
+        persist()
         let exercise = exercises[ei]
         if willComplete {
-            RecoveryNotifications.shared.start(for: setID, exerciseName: exercise.name, recovery: exercise.recovery)
+            let recovery = exercise.recovery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "2:00" : exercise.recovery
+            RecoveryNotifications.shared.start(for: setID, exerciseName: exercise.name, recovery: recovery)
         } else {
             RecoveryNotifications.shared.cancel(for: setID)
         }
     }
     func addSet(to exerciseID: UUID) {
-        guard let i = exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
-
-        // Non ricostruire le serie esistenti: aggiungiamo solamente una nuova serie.
-        // In questo modo ID, pesi, storico e stato delle serie precedenti restano intatti.
-        if exercises[i].backOffEnabled {
-            let backOff = exercises[i].sets.removeLast()
+        guard let i = exercises.firstIndex(where: {$0.id == exerciseID}) else { return }
+        if exercises[i].backOffEnabled, var backOff = exercises[i].sets.popLast() {
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
             exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
-            var newBackOff = backOff
-            newBackOff.completed = false
-            newBackOff.isBackOff = true
-            exercises[i].sets.append(newBackOff)
+            backOff.isBackOff = true
+            exercises[i].sets.append(backOff)
             refreshBackOff(i)
         } else {
             let source = exercises[i].sets.last ?? WorkoutSet(reps: "8-10", weight: 20)
             exercises[i].sets.append(WorkoutSet(reps: source.reps, weight: source.weight))
         }
+        persist()
     }
 
     func removeSet(from exerciseID: UUID) {
@@ -124,10 +130,11 @@ final class WorkoutStore: ObservableObject {
         let removed = exercises[i].sets.remove(at: index)
         RecoveryNotifications.shared.cancel(for: removed.id)
         refreshBackOff(i)
+        persist()
     }
-    func setReps(_ reps: String, exerciseID: UUID, setID: UUID) { guard let ei=exercises.firstIndex(where:{$0.id==exerciseID}), let si=exercises[ei].sets.firstIndex(where:{$0.id==setID}) else{return}; exercises[ei].sets[si].reps=reps }
+    func setReps(_ reps: String, exerciseID: UUID, setID: UUID) { guard let ei=exercises.firstIndex(where:{$0.id==exerciseID}), let si=exercises[ei].sets.firstIndex(where:{$0.id==setID}) else{return}; exercises[ei].sets[si].reps=reps; persist() }
     func setRecovery(_ recovery: String, exerciseID: UUID) { guard let i=exercises.firstIndex(where:{$0.id==exerciseID}) else{return}; exercises[i].recovery=recovery }
-    func moveExercise(_ exerciseID: UUID, day: String) { guard let i=exercises.firstIndex(where:{$0.id==exerciseID}) else{return}; exercises[i].day=day }
+    func moveExercise(_ exerciseID: UUID, day: String) { guard let i=exercises.firstIndex(where:{$0.id==exerciseID}) else{return}; exercises[i].day=day; persist() }
     func addExercise(day:String,name:String,reps:String,weights:[Double],recovery:String="",backOffEnabled: Bool = false, manualTarget: MuscleTarget? = nil) {
         let r=ExerciseRecognizer.recognize(name)
         let target = manualTarget ?? r.target
@@ -142,19 +149,23 @@ final class WorkoutStore: ObservableObject {
         }
         exercises.append(e)
         selectedDay=day
+        persist()
     }
     func addImported(_ item: ImportedExercise, weights: [Double]? = nil) { let ws = weights ?? Array(repeating: 20, count: max(1,item.sets)); addExercise(day:item.day,name:item.name,reps:item.reps,weights:ws,recovery:item.recovery) }
-    func remove(_ exercise: Exercise) { exercises.removeAll{$0.id==exercise.id} }
-    func resetDay() { for i in exercises.indices where exercises[i].day==selectedDay { for j in exercises[i].sets.indices { exercises[i].sets[j].completed=false; RecoveryNotifications.shared.cancel(for: exercises[i].sets[j].id) } } }
+    func remove(_ exercise: Exercise) { exercises.removeAll{$0.id==exercise.id}; persist() }
+    func resetDay() { for i in exercises.indices where exercises[i].day==selectedDay { for j in exercises[i].sets.indices { exercises[i].sets[j].completed=false; RecoveryNotifications.shared.cancel(for: exercises[i].sets[j].id) } }; persist() }
     func history(for exercise: Exercise)->[WeightLog] { exercise.sets.flatMap{$0.history}.sorted{$0.date<$1.date} }
     func latestWeight(for exercise: Exercise)->Double { history(for:exercise).last?.weight ?? exercise.sets.map(\.weight).max() ?? 0 }
     func maxWeight(for exercise: Exercise)->Double { max(history(for:exercise).map(\.weight).max() ?? 0, exercise.sets.map(\.weight).max() ?? 0) }
 
-    private func save() {
-        guard let data=try? JSONEncoder().encode(exercises) else{return}
-        UserDefaults.standard.set(data,forKey:key)
-        if let shared=GymShared.defaults() { shared.set(data,forKey:key) }
+    func persistChanges() { persist() }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(exercises) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+        GymShared.defaults()?.set(data, forKey: key)
     }
+
     private func load() {
         let standard = UserDefaults.standard.data(forKey:key) ?? UserDefaults.standard.data(forKey:legacyKey)
         let shared = GymShared.defaults()?.data(forKey:key) ?? GymShared.defaults()?.data(forKey:legacyKey)
@@ -169,7 +180,7 @@ final class WorkoutStore: ObservableObject {
                 migrated[i].backOffEnabled = false
             }
             exercises=migrated
-            save()
+            persist()
             return
         }
     }

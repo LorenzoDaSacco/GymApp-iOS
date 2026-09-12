@@ -1,13 +1,15 @@
-# Gym Tracker Pro – GitHub build
+# GymApp iOS
 
-Fix inclusi in questa versione:
-- timer di recupero / Live Activity indipendente dal giorno della settimana (LUNEDÌ–DOMENICA);
-- notifica locale al termine del recupero;
-- timer e barra visibili nell'app e Live Activity su Lock Screen/Dynamic Island;
-- aggiunta serie senza ricostruire o cancellare le serie già esistenti;
-- i pesi delle serie esistenti vengono mantenuti quando si aggiunge o rimuove una serie;
-- il campo peso non salva più uno 0 quando viene cancellato temporaneamente;
-- salvataggio dei pesi solo quando necessario, evitando il salvataggio a ogni carattere;
-- rimosso il reload continuo dei widget a ogni modifica, causa di rallentamenti;
-- icona AppIcon presente nel catalogo asset;
-- RecoveryActivityAttributes.swift presente una sola volta e collegato ai target corretti.
+Versione aggiornata del progetto con:
+
+- timer di recupero per **qualsiasi giorno della settimana** (lunedì-domenica);
+- notifica locale alla fine di ogni recupero;
+- Live Activity su schermata di blocco / Dynamic Island;
+- fallback automatico a 2:00 se un esercizio non ha un tempo di recupero impostato;
+- peso delle serie preservato quando si aggiunge una nuova serie;
+- commit del peso digitato prima di `+ Serie`;
+- niente reload del widget a ogni modifica;
+- mappa muscolare caricata una sola volta per esercizio/target, evitando il lag causato dal reload continuo della WKWebView;
+- campi ripetizioni e recupero modificati localmente e salvati quando l'editing termina.
+
+Per le Live Activities, su iPhone devono essere abilitate nelle impostazioni di sistema e l'app deve avere i permessi per le notifiche.

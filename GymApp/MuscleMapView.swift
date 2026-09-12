@@ -4,16 +4,29 @@ import WebKit
 struct MuscleMapView: UIViewRepresentable {
     let target: MuscleTarget
 
+    final class Coordinator {
+        var loadedTarget: MuscleTarget?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> WKWebView {
-        let v = WKWebView()
-        v.isOpaque = false
-        v.backgroundColor = .clear
-        v.scrollView.isScrollEnabled = false
-        v.scrollView.bounces = false
-        return v
+        let configuration = WKWebViewConfiguration()
+        let web = WKWebView(frame: .zero, configuration: configuration)
+        web.isOpaque = false
+        web.backgroundColor = .clear
+        web.scrollView.isScrollEnabled = false
+        web.scrollView.bounces = false
+        web.isUserInteractionEnabled = false
+        return web
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {
+        // SwiftUI can call updateUIView many times while typing/editing a set.
+        // The SVG is expensive to parse, so reload it only when the target muscle changes.
+        guard context.coordinator.loadedTarget != target else { return }
+        context.coordinator.loadedTarget = target
+
         guard let url = Bundle.main.url(forResource: "mappa", withExtension: "svg"),
               var svg = try? String(contentsOf: url, encoding: .utf8) else { return }
 
@@ -21,46 +34,37 @@ struct MuscleMapView: UIViewRepresentable {
 
         let viewBox: String
         switch target {
-        case .chest:
-            viewBox = "85 75 255 185"
-        case .back:
-            viewBox = "445 95 210 205"
-        case .shoulders:
-            viewBox = "75 80 270 165"
-        case .biceps:
-            viewBox = "45 135 315 145"
-        case .triceps:
-            viewBox = "425 135 240 150"
-        case .quads:
-            viewBox = "120 255 180 195"
-        case .hamstrings:
-            viewBox = "450 255 190 205"
-        case .fullBody:
-            viewBox = "0 0 753 703"
+        case .chest: viewBox = "85 75 255 185"
+        case .back: viewBox = "445 95 210 205"
+        case .shoulders: viewBox = "75 80 270 165"
+        case .biceps: viewBox = "45 135 315 145"
+        case .triceps: viewBox = "425 135 240 150"
+        case .quads: viewBox = "120 255 180 195"
+        case .hamstrings: viewBox = "450 255 190 205"
+        case .fullBody: viewBox = "0 0 753 703"
         }
 
-        let t = target.rawValue
-        let highlighted: [Int] = {
-            switch target {
-            case .chest: return [1, 2]
-            case .biceps: return [3, 4]
-            case .quads: return [11, 12]
-            case .back: return [17, 18]
-            case .triceps: return [19, 20]
-            case .hamstrings: return [24, 25, 26, 27, 28, 29, 30, 31]
-            case .shoulders: return [32, 33, 34, 35]
-            case .fullBody: return []
-            }
-        }()
+        let highlighted: [Int]
+        switch target {
+        case .chest: highlighted = [1, 2]
+        case .biceps: highlighted = [3, 4]
+        case .quads: highlighted = [11, 12]
+        case .back: highlighted = [17, 18]
+        case .triceps: highlighted = [19, 20]
+        case .hamstrings: highlighted = [24, 25, 26, 27, 28, 29, 30, 31]
+        case .shoulders: highlighted = [32, 33, 34, 35]
+        case .fullBody: highlighted = []
+        }
         let ids = highlighted.map(String.init).joined(separator: ",")
-
         let replacement = """
         <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="\(viewBox)" preserveAspectRatio="xMidYMid meet">
         """
+
         if let start = svg.range(of: #"<svg[^>]*>"#, options: .regularExpression) {
             svg.replaceSubrange(start, with: replacement)
         }
 
+        let t = target.rawValue
         let html = """
         <html>
         <head>

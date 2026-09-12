@@ -238,8 +238,12 @@ struct ExerciseCard: View {
             }
 
             HStack {
-                Button("+ Serie") { commitAllWeights(); focused = nil; store.addSet(to: exercise.id) }.buttonStyle(.bordered)
-                Button("− Serie") { commitAllWeights(); focused = nil; store.removeSet(from: exercise.id) }.buttonStyle(.bordered)
+                Button("+ Serie") {
+                    commitPendingFields()
+                    focused = nil
+                    store.addSet(to: exercise.id)
+                }.buttonStyle(.bordered)
+                Button("− Serie") { store.removeSet(from: exercise.id) }.buttonStyle(.bordered)
                 Spacer()
                 Text("\(exercise.sets.count) serie")
                     .font(.caption)
@@ -261,13 +265,19 @@ struct ExerciseCard: View {
         }
     }
 
-    private func commitAllWeights() {
-        for set in exercise.sets where !set.isBackOff {
-            guard let raw = weightText[set.id] else { continue }
+    private func commitPendingFields() {
+        // Commit any text still held locally before + Serie is executed.
+        // This prevents the focused first-set weight from being lost when a new set is added.
+        for currentSet in exercise.sets where !currentSet.isBackOff {
+            guard let raw = weightText[currentSet.id] else { continue }
             let normalized = raw.replacingOccurrences(of: ",", with: ".")
-            if let value = Double(normalized) {
-                store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-            }
+            guard let value = Double(normalized) else { continue }
+            store.updateWeight(value, exerciseID: exercise.id, setID: currentSet.id)
+        }
+
+        for currentSet in exercise.sets {
+            guard let value = repsText[currentSet.id], value != currentSet.reps else { continue }
+            store.setReps(value, exerciseID: exercise.id, setID: currentSet.id)
         }
     }
 }
@@ -277,6 +287,8 @@ struct RecoveryTimerSection: View {
     let exercise: Exercise
     let editing: Bool
     let accentColor: Color
+    @State private var recoveryText: String = ""
+    @FocusState private var recoveryFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -284,13 +296,18 @@ struct RecoveryTimerSection: View {
                 Text("Recupero")
                     .font(.caption.bold())
 
-                TextField("2:00", text: Binding(
-                    get: { exercise.recovery },
-                    set: { store.setRecovery($0, exerciseID: exercise.id) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 90)
-                .disabled(!editing)
+                TextField("2:00", text: $recoveryText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 90)
+                    .focused($recoveryFocused)
+                    .disabled(!editing)
+                    .onAppear { recoveryText = exercise.recovery }
+                    .onChange(of: recoveryFocused) { isFocused in
+                        if !isFocused { commitRecovery() }
+                    }
+                    .onChange(of: exercise.recovery) { newValue in
+                        if !recoveryFocused { recoveryText = newValue }
+                    }
 
                 Spacer()
 
@@ -303,11 +320,18 @@ struct RecoveryTimerSection: View {
             if let setID = activeTimerSetID {
                 RecoveryCountdownView(
                     setID: setID,
-                    duration: RecoveryNotifications.seconds(from: exercise.recovery) ?? 0,
+                    duration: RecoveryNotifications.seconds(from: exercise.recovery) ?? 120,
                     accentColor: accentColor
                 )
             }
         }
+    }
+
+    private func commitRecovery() {
+        let value = recoveryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value != exercise.recovery else { return }
+        store.setRecovery(value, exerciseID: exercise.id)
+        store.persistChanges()
     }
 
     private var activeTimerSetID: UUID? {
@@ -376,11 +400,15 @@ struct SetRow: View {
             Text("S\(index + 1)").font(.caption.bold()).frame(width: 30)
             TextField(set.reps, text: Binding(
                 get: { repsText[set.id] ?? set.reps },
-                set: { repsText[set.id] = $0; store.setReps($0, exerciseID: exercise.id, setID: set.id) }
+                set: { repsText[set.id] = $0 }
             ))
             .textFieldStyle(.roundedBorder)
             .frame(width: 75)
+            .focused(focused, equals: set.id)
             .disabled(!editing)
+            .onChange(of: focused.wrappedValue) { newFocus in
+                if newFocus != set.id { commitReps() }
+            }
 
             if set.isBackOff {
                 HStack(spacing: 6) {
@@ -400,13 +428,9 @@ struct SetRow: View {
             } else {
                 TextField("kg", text: Binding(
                     get: {
-                        weightText[set.id] ?? format(set.weight)
+                        weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
                     },
-                    set: { newValue in
-                        // Il testo resta locale durante la digitazione: così non salviamo
-                        // l'intero allenamento ad ogni singolo carattere e l'app resta fluida.
-                        weightText[set.id] = newValue
-                    }
+                    set: { weightText[set.id] = $0 }
                 ))
                 .keyboardType(.decimalPad)
                 .textFieldStyle(.roundedBorder)
@@ -415,13 +439,6 @@ struct SetRow: View {
                 .disabled(!editing)
                 .onSubmit { commitWeight() }
                 .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
-                .onChange(of: set.weight) { newValue in
-                    // Se una nuova serie viene aggiunta, il testo delle serie esistenti
-                    // viene riallineato al modello senza cancellare il peso.
-                    if focused.wrappedValue != set.id {
-                        weightText[set.id] = format(newValue)
-                    }
-                }
 
                 Text("kg")
                     .font(.caption.bold())
@@ -429,7 +446,7 @@ struct SetRow: View {
                     .frame(width: 22, alignment: .leading)
             }
 
-            Button { commitWeight(); focused.wrappedValue = nil; store.toggle(exercise.id, setID: set.id) } label: {
+            Button { store.toggle(exercise.id, setID: set.id) } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
             }
@@ -448,19 +465,21 @@ struct SetRow: View {
         String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
     }
 
-    private func commitWeight() {
-        let raw = weightText[set.id] ?? format(set.weight)
-        let normalized = raw.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+    private func commitReps() {
+        let value = repsText[set.id] ?? set.reps
+        guard value != set.reps else { return }
+        store.setReps(value, exerciseID: exercise.id, setID: set.id)
+    }
 
-        // Un campo peso non può restare senza numero: se l'utente cancella
-        // tutto e chiude la tastiera, ripristiniamo il valore precedente.
-        guard !normalized.isEmpty, let value = Double(normalized), value >= 0 else {
-            weightText[set.id] = format(set.weight)
+    private func commitWeight() {
+        let raw = weightText[set.id] ?? ""
+        let normalized = raw.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized) else {
+            if raw.isEmpty { store.updateWeight(0, exerciseID: exercise.id, setID: set.id, saveHistory: false) }
             return
         }
-
         store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-        weightText[set.id] = format(value)
+        weightText[set.id] = String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
     }
 }
 
