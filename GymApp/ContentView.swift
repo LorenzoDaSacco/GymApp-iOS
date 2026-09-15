@@ -143,6 +143,7 @@ struct DashboardView: View {
                             }
                         }
                     }
+<<<<<<< HEAD
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -152,6 +153,8 @@ struct DashboardView: View {
                     WeeklyOverviewCard(store: store) { day in
                         focusedDaySelection(day)
                     }
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
                 }
 
                 HStack(spacing: 12) {
@@ -204,7 +207,10 @@ struct DashboardView: View {
 
     private func focusedDaySelection(_ day: String) {
         store.selectedDay = day
+<<<<<<< HEAD
         store.prepareDayForToday(day)
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
     }
 }
 
@@ -783,8 +789,11 @@ struct AnalyticsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
+<<<<<<< HEAD
                 WeeklyHistorySection(store: store)
 
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
                 MuscleVolumeSummary(store: store)
 
                 if activeDays.isEmpty {
@@ -813,6 +822,7 @@ struct AnalyticsView: View {
     }
 }
 
+<<<<<<< HEAD
 
 struct WeeklyOverviewCard: View {
     @Environment(\.gymAccentColor) private var accentColor
@@ -982,6 +992,8 @@ struct WeeklyHistorySection: View {
     }
 }
 
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
 struct MuscleVolumeSummary: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore

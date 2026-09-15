@@ -44,7 +44,10 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
         reps: String = "",
         weight: Double = 20,
         completed: Bool = false,
+<<<<<<< HEAD
         completedAt: Date? = nil,
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
         history: [WeightLog] = [],
         isBackOff: Bool = false
     ) {
@@ -52,13 +55,20 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
         self.reps = reps
         self.weight = weight
         self.completed = completed
+<<<<<<< HEAD
         self.completedAt = completedAt
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
         self.history = history
         self.isBackOff = isBackOff
     }
 
     enum CodingKeys: String, CodingKey {
+<<<<<<< HEAD
         case id, reps, weight, completed, completedAt, history, isBackOff
+=======
+        case id, reps, weight, completed, history, isBackOff
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
     }
 
     init(from decoder: Decoder) throws {
@@ -80,16 +90,24 @@ struct SessionSetRecord: Codable, Equatable, Identifiable {
     let weight: Double
     let reps: Int
     let isBackOff: Bool
+<<<<<<< HEAD
     /// Opzionale per poter leggere lo storico creato dalle versioni precedenti.
     let completedAt: Date?
 
     init(id: UUID = UUID(), setIndex: Int, weight: Double, reps: Int, isBackOff: Bool = false, completedAt: Date? = nil) {
+=======
+
+    init(id: UUID = UUID(), setIndex: Int, weight: Double, reps: Int, isBackOff: Bool = false) {
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
         self.id = id
         self.setIndex = setIndex
         self.weight = weight
         self.reps = reps
         self.isBackOff = isBackOff
+<<<<<<< HEAD
         self.completedAt = completedAt
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
     }
 
     var volume: Double { weight * Double(reps) }

@@ -60,9 +60,13 @@ final class WorkoutStore: ObservableObject {
     @Published var selectedDay = "LUNEDÌ"
     @Published var exercises: [Exercise] = []
 
+<<<<<<< HEAD
     /// Settimana completa: la scheda può avere esercizi anche nel weekend, ma un giorno
     /// senza esercizi viene mostrato esplicitamente come RIPOSO.
     let days = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
+=======
+    let days = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ"]
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
 
     private let key = GymShared.workoutsKey
     private let legacyKey = GymShared.legacyKey
@@ -86,6 +90,8 @@ final class WorkoutStore: ObservableObject {
             total + (todaySession(for: exercise)?.sets.count ?? 0)
         }
     }
+
+    // MARK: - Serie
 
     // MARK: - Serie
 
@@ -202,7 +208,10 @@ final class WorkoutStore: ObservableObject {
 
         let willComplete = !set.completed
         exercises[ei].sets[si].completed = willComplete
+<<<<<<< HEAD
         exercises[ei].sets[si].completedAt = willComplete ? Date() : nil
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
         updateTodaySession(forExerciseAt: ei)
         persist()
 
@@ -433,6 +442,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func weeklyVolume(for target: MuscleTarget, referenceDate: Date = Date()) -> Double {
+<<<<<<< HEAD
         let calendar = Calendar.current
         let start = startOfWeek(for: referenceDate)
         let end = calendar.date(byAdding: .day, value: 7, to: start) ?? referenceDate
@@ -440,6 +450,13 @@ final class WorkoutStore: ObservableObject {
             .filter { $0.target == target }
             .flatMap { $0.sessions }
             .filter { $0.date >= start && $0.date < end }
+=======
+        guard let start = Calendar.current.date(byAdding: .day, value: -6, to: referenceDate) else { return 0 }
+        return exercises
+            .filter { $0.target == target }
+            .flatMap { $0.sessions }
+            .filter { $0.date >= start && $0.date <= referenceDate }
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
             .reduce(0) { $0 + $1.volume }
     }
 
@@ -455,8 +472,12 @@ final class WorkoutStore: ObservableObject {
                 setIndex: offset,
                 weight: set.weight,
                 reps: reps,
+<<<<<<< HEAD
                 isBackOff: set.isBackOff,
                 completedAt: set.completedAt ?? date
+=======
+                isBackOff: set.isBackOff
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
             )
         }
 
@@ -480,6 +501,7 @@ final class WorkoutStore: ObservableObject {
         exercises[index].sessions.removeAll { calendar.isDateInToday($0.date) }
     }
 
+<<<<<<< HEAD
     // MARK: - Settimana lunedì → domenica
 
     func startOfWeek(for date: Date = Date()) -> Date {
@@ -587,6 +609,8 @@ final class WorkoutStore: ObservableObject {
         persist()
     }
 
+=======
+>>>>>>> 64db72c976aea6b5e22d79ff3e9612b3216459a7
     // MARK: - Backup locale
 
     func backupData() -> Data? {
