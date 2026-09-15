@@ -3,6 +3,7 @@ import Charts
 import PhotosUI
 import PDFKit
 import UIKit
+import UniformTypeIdentifiers
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
     case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
@@ -113,11 +114,45 @@ struct DashboardView: View {
                     }
                 }
 
-                Picker("Giorno", selection: $store.selectedDay) {
-                    ForEach(store.days, id: \.self) { Text($0) }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("GIORNO")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(store.days, id: \.self) { day in
+                                Button {
+                                    focusedDaySelection(day)
+                                } label: {
+                                    Text(day.prefix(3))
+                                        .font(.caption.bold())
+                                        .frame(minWidth: 54)
+                                        .padding(.vertical, 11)
+                                        .background(
+                                            store.selectedDay == day
+                                                ? accentColor
+                                                : accentColor.opacity(0.08),
+                                            in: RoundedRectangle(cornerRadius: 13)
+                                        )
+                                        .foregroundStyle(
+                                            store.selectedDay == day ? Color.white : Color.primary
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                 }
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("SETTIMANA")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    WeeklyOverviewCard(store: store) { day in
+                        focusedDaySelection(day)
+                    }
+                }
 
                 HStack(spacing: 12) {
                     Metric(title: "Esercizi", value: "\(store.dayExercises.count)", icon: "figure.strengthtraining.traditional")
@@ -127,6 +162,26 @@ struct DashboardView: View {
 
                 SwiftUI.ProgressView(value: store.totalSets == 0 ? 0 : Double(store.completedSets) / Double(store.totalSets))
                     .tint(accentColor)
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("OGGI")
+                            .font(.caption.bold())
+                            .foregroundStyle(accentColor)
+                        Text(store.completedSets == 0
+                             ? "Pronto per iniziare"
+                             : "\(store.completedSets) di \(store.totalSets) serie completate")
+                            .font(.subheadline.bold())
+                    }
+                    Spacer()
+                    Image(systemName: store.totalSets > 0 && store.completedSets == store.totalSets
+                          ? "checkmark.seal.fill"
+                          : "bolt.fill")
+                        .font(.title3)
+                        .foregroundStyle(accentColor)
+                }
+                .padding(14)
+                .background(accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
 
                 if store.dayExercises.isEmpty {
                     EmptyDayView()
@@ -139,11 +194,17 @@ struct DashboardView: View {
             .padding()
         }
         .navigationTitle(store.selectedDay)
+        .onAppear { store.prepareDayForToday(store.selectedDay) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reset") { store.resetDay() }
             }
         }
+    }
+
+    private func focusedDaySelection(_ day: String) {
+        store.selectedDay = day
+        store.prepareDayForToday(day)
     }
 }
 
@@ -184,6 +245,14 @@ struct ExerciseCard: View {
     @State private var showingDeleteConfirmation = false
     @FocusState private var focused: UUID?
 
+    private var previousSession: ExerciseSession? {
+        store.previousSession(for: exercise)
+    }
+
+    private var performance: PerformanceComparison? {
+        store.performance(for: exercise)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
@@ -191,9 +260,56 @@ struct ExerciseCard: View {
                     Text(exercise.name).font(.headline)
                     Text(exercise.group).font(.caption.bold()).foregroundStyle(accentColor)
                     Text(exercise.focus).font(.caption).foregroundStyle(.secondary)
+                    Text("Scheda: \(exercise.sets.filter { !$0.isBackOff }.count) × \(exercise.targetReps)")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(editing ? "Fine" : "Modifica") { editing.toggle() }
+                Button(editing ? "Fine" : "Modifica") {
+                    commitPendingFields()
+                    focused = nil
+                    editing.toggle()
+                }
+            }
+
+            if let previousSession {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("ULTIMA VOLTA")
+                            .font(.caption.bold())
+                            .foregroundStyle(accentColor)
+                        Spacer()
+                        Text(previousSession.date.formatted(date: .abbreviated, time: .omitted))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(previousSession.sets) { previousSet in
+                        HStack {
+                            Text("S\(previousSet.setIndex + 1)")
+                                .font(.caption.bold())
+                                .frame(width: 28, alignment: .leading)
+                            Text("\(formatWeight(previousSet.weight)) kg")
+                                .font(.caption.bold())
+                            Text("×")
+                                .foregroundStyle(.secondary)
+                            Text("\(previousSet.reps)")
+                                .font(.caption.bold())
+                            if previousSet.isBackOff {
+                                Text("BACK-OFF")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(accentColor)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+                .padding(11)
+                .background(accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+            }
+
+            if let performance {
+                PerformanceBadge(comparison: performance, accentColor: accentColor)
             }
 
             RecoveryTimerSection(
@@ -218,10 +334,28 @@ struct ExerciseCard: View {
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Back-off ultima serie").font(.caption.bold())
-                        Text("Ultima serie = 80% della serie precedente").font(.caption2).foregroundStyle(.secondary)
+                        Text("Ultima serie = 80% della serie precedente")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .tint(accentColor)
+            }
+
+            HStack {
+                Text("SERIE")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("PESO")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Text("REPS")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Text("✓")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
             }
 
             ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
@@ -242,8 +376,15 @@ struct ExerciseCard: View {
                     commitPendingFields()
                     focused = nil
                     store.addSet(to: exercise.id)
-                }.buttonStyle(.bordered)
-                Button("− Serie") { store.removeSet(from: exercise.id) }.buttonStyle(.bordered)
+                }
+                .buttonStyle(.bordered)
+
+                Button("− Serie") {
+                    focused = nil
+                    store.removeSet(from: exercise.id)
+                }
+                .buttonStyle(.bordered)
+
                 Spacer()
                 Text("\(exercise.sets.count) serie")
                     .font(.caption)
@@ -266,19 +407,60 @@ struct ExerciseCard: View {
     }
 
     private func commitPendingFields() {
-        // Commit any text still held locally before + Serie is executed.
-        // This prevents the focused first-set weight from being lost when a new set is added.
         for currentSet in exercise.sets where !currentSet.isBackOff {
-            guard let raw = weightText[currentSet.id] else { continue }
-            let normalized = raw.replacingOccurrences(of: ",", with: ".")
-            guard let value = Double(normalized) else { continue }
-            store.updateWeight(value, exerciseID: exercise.id, setID: currentSet.id)
+            if let raw = weightText[currentSet.id],
+               let value = Double(raw.replacingOccurrences(of: ",", with: ".")) {
+                store.updateWeight(value, exerciseID: exercise.id, setID: currentSet.id)
+            }
         }
 
         for currentSet in exercise.sets {
-            guard let value = repsText[currentSet.id], value != currentSet.reps else { continue }
-            store.setReps(value, exerciseID: exercise.id, setID: currentSet.id)
+            if let value = repsText[currentSet.id], value != currentSet.reps {
+                store.setReps(value, exerciseID: exercise.id, setID: currentSet.id)
+            }
         }
+    }
+
+    private func formatWeight(_ value: Double) -> String {
+        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
+    }
+}
+
+struct PerformanceBadge: View {
+    let comparison: PerformanceComparison
+    let accentColor: Color
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Text(comparison.status.symbol)
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(comparison.status.title)
+                    .font(.caption.bold())
+                Text(detailText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(11)
+        .background(accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var detailText: String {
+        let percentage = abs(comparison.volumeDeltaRatio * 100)
+        switch comparison.status {
+        case .progress:
+            return "Performance complessiva +\(format(percentage))% rispetto all'ultima sessione."
+        case .maintain:
+            return "Performance sostanzialmente stabile rispetto all'ultima sessione."
+        case .decline:
+            return "Performance complessiva −\(format(percentage))% rispetto all'ultima sessione."
+        }
+    }
+
+    private func format(_ value: Double) -> String {
+        String(format: "%.0f", value)
     }
 }
 
@@ -320,7 +502,12 @@ struct RecoveryTimerSection: View {
             if let setID = activeTimerSetID {
                 RecoveryCountdownView(
                     setID: setID,
-                    duration: RecoveryNotifications.seconds(from: exercise.recovery) ?? 120,
+                    duration: RecoveryNotifications.shared.duration(
+                        for: setID,
+                        fallback: RecoveryNotifications.seconds(from: exercise.recovery) ?? 120
+                    ),
+                    exerciseName: exercise.name,
+                    recoveryText: exercise.recovery.isEmpty ? "2:00" : exercise.recovery,
                     accentColor: accentColor
                 )
             }
@@ -331,16 +518,15 @@ struct RecoveryTimerSection: View {
         let value = recoveryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value != exercise.recovery else { return }
         store.setRecovery(value, exerciseID: exercise.id)
-        store.persistChanges()
     }
 
     private var activeTimerSetID: UUID? {
-        let now = Date()
-        return exercise.sets
-            .filter { $0.completed }
-            .compactMap { set -> (UUID, Date)? in
-                guard let endDate = RecoveryNotifications.shared.endDate(for: set.id), endDate > now else { return nil }
-                return (set.id, endDate)
+        exercise.sets
+            .compactMap { set -> (UUID, TimeInterval)? in
+                guard set.completed,
+                      let remaining = RecoveryNotifications.shared.remaining(for: set.id),
+                      remaining > 0 else { return nil }
+                return (set.id, remaining)
             }
             .max(by: { $0.1 < $1.1 })?.0
     }
@@ -349,21 +535,23 @@ struct RecoveryTimerSection: View {
 struct RecoveryCountdownView: View {
     let setID: UUID
     let duration: TimeInterval
+    let exerciseName: String
+    let recoveryText: String
     let accentColor: Color
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let endDate = RecoveryNotifications.shared.endDate(for: setID)
-            let remaining = max(0, (endDate ?? context.date).timeIntervalSince(context.date))
+            let remaining = RecoveryNotifications.shared.remaining(for: setID, now: context.date) ?? 0
+            let paused = RecoveryNotifications.shared.isPaused(for: setID)
             let progress = duration > 0 ? min(1, max(0, remaining / duration)) : 0
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(remaining > 0 ? formattedTime(remaining) : "PRONTO")
                         .font(.system(.headline, design: .monospaced).bold())
                         .foregroundStyle(remaining > 0 ? .primary : accentColor)
                     Spacer()
-                    Text(remaining > 0 ? "Tempo restante" : "Puoi ripartire")
+                    Text(paused ? "In pausa" : (remaining > 0 ? "Tempo restante" : "Puoi ripartire"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -371,6 +559,46 @@ struct RecoveryCountdownView: View {
                 ProgressView(value: progress, total: 1)
                     .tint(accentColor)
                     .scaleEffect(x: 1, y: 1.35, anchor: .center)
+
+                HStack(spacing: 7) {
+                    Button("−15") {
+                        _ = RecoveryNotifications.shared.adjust(
+                            for: setID,
+                            seconds: -15,
+                            exerciseName: exerciseName,
+                            recoveryText: recoveryText
+                        )
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(paused ? "Riprendi" : "Pausa") {
+                        if paused {
+                            _ = RecoveryNotifications.shared.resume(
+                                for: setID,
+                                exerciseName: exerciseName,
+                                recoveryText: recoveryText
+                            )
+                        } else {
+                            RecoveryNotifications.shared.pause(for: setID)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("+15") {
+                        _ = RecoveryNotifications.shared.adjust(
+                            for: setID,
+                            seconds: 15,
+                            exerciseName: exerciseName,
+                            recoveryText: recoveryText
+                        )
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Salta") {
+                        RecoveryNotifications.shared.skip(for: setID)
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -396,63 +624,75 @@ struct SetRow: View {
     var focused: FocusState<UUID?>.Binding
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text("S\(index + 1)").font(.caption.bold()).frame(width: 30)
-            TextField(set.reps, text: Binding(
-                get: { repsText[set.id] ?? set.reps },
-                set: { repsText[set.id] = $0 }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 75)
-            .focused(focused, equals: set.id)
-            .disabled(!editing)
-            .onChange(of: focused.wrappedValue) { newFocus in
-                if newFocus != set.id { commitReps() }
-            }
+        HStack(spacing: 8) {
+            Text("S\(index + 1)")
+                .font(.caption.bold())
+                .frame(width: 30, alignment: .leading)
 
             if set.isBackOff {
-                HStack(spacing: 6) {
-                    Text(format(store.backOffWeight(exerciseID: exercise.id)))
-                        .font(.body.bold())
-                        .frame(width: 75, alignment: .trailing)
-                    Text("kg")
-                        .font(.caption.bold())
-                        .foregroundStyle(accentColor)
-                    Text("Back-off −20%")
-                        .font(.caption2.bold())
-                        .foregroundStyle(accentColor)
-                }
-                .padding(.vertical, 9)
-                .padding(.horizontal, 8)
-                .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-            } else {
-                TextField("kg", text: Binding(
-                    get: {
-                        weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
-                    },
-                    set: { weightText[set.id] = $0 }
-                ))
-                .keyboardType(.decimalPad)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 75)
-                .focused(focused, equals: set.id)
-                .disabled(!editing)
-                .onSubmit { commitWeight() }
-                .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
-
+                Text(format(store.backOffWeight(exerciseID: exercise.id)))
+                    .font(.body.bold())
+                    .frame(width: 72, alignment: .trailing)
+                    .padding(.vertical, 9)
+                    .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
                 Text("kg")
                     .font(.caption.bold())
                     .foregroundStyle(accentColor)
-                    .frame(width: 22, alignment: .leading)
+            } else {
+                TextField("kg", text: Binding(
+                    get: {
+                        weightText[set.id] ?? (set.weight == 0 ? "" : format(set.weight))
+                    },
+                    set: { value in
+                        weightText[set.id] = sanitizeWeightInput(value)
+                    }
+                ))
+                .keyboardType(.decimalPad)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 72)
+                .focused(focused, equals: set.id)
+                .disabled(!editing)
+                .onSubmit { commitWeight() }
+                .onChange(of: focused.wrappedValue) { newFocus in
+                    if newFocus == nil { commitWeight() }
+                }
+                Text("kg")
+                    .font(.caption.bold())
+                    .foregroundStyle(accentColor)
+                    .frame(width: 20, alignment: .leading)
             }
 
-            Button { store.toggle(exercise.id, setID: set.id) } label: {
+            TextField(exercise.targetReps, text: Binding(
+                get: { repsText[set.id] ?? set.reps },
+                set: { repsText[set.id] = $0.filter(\.isNumber).prefix(3).description }
+            ))
+            .keyboardType(.numberPad)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 65)
+            .focused(focused, equals: set.id)
+            .disabled(!editing)
+            .onChange(of: focused.wrappedValue) { newFocus in
+                if newFocus == nil { commitReps() }
+            }
+
+            Button(action: completeSet) {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
             }
             .buttonStyle(.plain)
-            Spacer()
+            .foregroundStyle(set.completed ? accentColor : .secondary)
+            .disabled(!canComplete)
+
+            if set.isBackOff {
+                Text("BACK-OFF")
+                    .font(.caption2.bold())
+                    .foregroundStyle(accentColor)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 3)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -461,29 +701,70 @@ struct SetRow: View {
         }
     }
 
-    private func format(_ v: Double) -> String {
-        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
+    private var canComplete: Bool {
+        if set.completed { return true }
+        let reps = repsText[set.id] ?? set.reps
+        let weight = weightText[set.id] ?? format(set.weight)
+        return (Int(reps) ?? 0) > 0 && Double(weight.replacingOccurrences(of: ",", with: ".")) != nil
+    }
+
+    private func completeSet() {
+        commitWeight()
+        commitReps()
+        guard !set.completed else {
+            store.toggle(exercise.id, setID: set.id)
+            focused.wrappedValue = nil
+            return
+        }
+        let reps = repsText[set.id] ?? set.reps
+        guard (Int(reps) ?? 0) > 0 else { return }
+        store.toggle(exercise.id, setID: set.id)
+        focused.wrappedValue = nil
+    }
+
+    private func sanitizeWeightInput(_ value: String) -> String {
+        let normalized = value.replacingOccurrences(of: ",", with: ".")
+        var result = ""
+        var hasDot = false
+        for character in normalized {
+            if character.isNumber {
+                result.append(character)
+            } else if character == "." && !hasDot {
+                hasDot = true
+                result.append(character)
+            }
+        }
+        // Il campo del peso non può diventare vuoto: quando l'utente seleziona
+        // tutto e cancella, manteniamo l'ultimo valore valido.
+        if result.isEmpty {
+            return weightText[set.id] ?? (set.weight == 0 ? "0" : format(set.weight))
+        }
+        return result
+    }
+
+    private func format(_ value: Double) -> String {
+        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
     }
 
     private func commitReps() {
         let value = repsText[set.id] ?? set.reps
-        guard value != set.reps else { return }
-        store.setReps(value, exerciseID: exercise.id, setID: set.id)
+        if value != set.reps {
+            store.setReps(value, exerciseID: exercise.id, setID: set.id)
+        }
     }
 
     private func commitWeight() {
-        let raw = weightText[set.id] ?? ""
+        guard !set.isBackOff else { return }
+        let raw = weightText[set.id] ?? (set.weight == 0 ? "0" : format(set.weight))
         let normalized = raw.replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized) else {
-            if raw.isEmpty { store.updateWeight(0, exerciseID: exercise.id, setID: set.id, saveHistory: false) }
-            return
-        }
+        guard let value = Double(normalized), value >= 0 else { return }
         store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-        weightText[set.id] = String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
+        weightText[set.id] = format(value)
     }
 }
 
 // MARK: - PROGRESSI
+
 
 struct AnalyticsView: View {
     @Environment(\.gymAccentColor) private var accentColor
@@ -498,9 +779,13 @@ struct AnalyticsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Progressi").font(.largeTitle.bold())
-                Text("I tuoi allenamenti sono organizzati per giornata. Apri una scheda per vedere gli esercizi e poi entra nel singolo esercizio per il grafico dei kg.")
+                Text("Settimana reale da lunedì a domenica, serie completate e storico degli allenamenti.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                WeeklyHistorySection(store: store)
+
+                MuscleVolumeSummary(store: store)
 
                 if activeDays.isEmpty {
                     ContentUnavailableView("Nessun allenamento", systemImage: "chart.line.uptrend.xyaxis")
@@ -525,6 +810,214 @@ struct AnalyticsView: View {
                 }
             }
         }
+    }
+}
+
+
+struct WeeklyOverviewCard: View {
+    @Environment(\.gymAccentColor) private var accentColor
+    @ObservedObject var store: WorkoutStore
+    let action: (String) -> Void
+
+    private var week: WorkoutWeekSummary { store.currentWeekSummary() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(store.weekTitle())
+                        .font(.headline.bold())
+                    Text("Lunedì → Domenica")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(week.completedSets)/\(week.totalSets)")
+                        .font(.headline.bold())
+                    Text("serie")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            SwiftUI.ProgressView(value: week.progress)
+                .tint(accentColor)
+
+            HStack(spacing: 6) {
+                ForEach(week.days) { day in
+                    Button { action(day.day) } label: {
+                        VStack(spacing: 5) {
+                            Text(day.day.prefix(3))
+                                .font(.caption2.bold())
+                            Text(day.date.formatted(.dateTime.day()))
+                                .font(.headline.bold())
+                            Text(day.status.symbol)
+                                .font(.caption.bold())
+                            if day.totalSets > 0 {
+                                Text("\(day.completedSets)/\(day.totalSets)")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("-")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(background(for: day), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Label("\(week.workoutDays) allenamenti", systemImage: "dumbbell.fill")
+                Spacer()
+                Label("\(week.completedWorkoutDays) completati", systemImage: "checkmark.seal.fill")
+            }
+            .font(.caption.bold())
+            .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(accentColor.opacity(0.12)))
+    }
+
+    private func background(for day: WorkoutDaySummary) -> Color {
+        switch day.status {
+        case .rest:
+            return Color.secondary.opacity(0.07)
+        case .completed:
+            return accentColor.opacity(0.18)
+        case .inProgress:
+            return accentColor.opacity(0.10)
+        case .notStarted:
+            return accentColor.opacity(0.05)
+        }
+    }
+}
+
+struct WeeklyHistorySection: View {
+    @Environment(\.gymAccentColor) private var accentColor
+    @ObservedObject var store: WorkoutStore
+    @State private var expandedWeekStart: Date?
+
+    private var weeks: [WorkoutWeekSummary] { store.historicalWeekSummaries() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("STORICO SETTIMANALE")
+                .font(.caption.bold())
+                .foregroundStyle(accentColor)
+
+            ForEach(Array(weeks.enumerated()), id: \.element.startDate) { index, week in
+                let isCurrent = Calendar.current.isDate(week.startDate, equalTo: store.startOfWeek(), toGranularity: .day)
+                VStack(alignment: .leading, spacing: 9) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            expandedWeekStart = expandedWeekStart == week.startDate ? nil : week.startDate
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(weekLabel(week))
+                                    .font(.headline.bold())
+                                Text("\(week.workoutDays) allenamenti • \(week.completedSets)/\(week.totalSets) serie")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if isCurrent {
+                                Text("ATTUALE")
+                                    .font(.system(size: 9, weight: .black))
+                                    .foregroundStyle(accentColor)
+                            }
+                            Image(systemName: expandedWeekStart == week.startDate ? "chevron.up" : "chevron.down")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    SwiftUI.ProgressView(value: week.progress)
+                        .tint(accentColor)
+
+                    if expandedWeekStart == week.startDate {
+                        ForEach(week.days) { day in
+                            HStack(spacing: 9) {
+                                Text(day.day.prefix(3))
+                                    .font(.caption.bold())
+                                    .frame(width: 34, alignment: .leading)
+                                Text(day.date.formatted(.dateTime.day().month(.abbreviated)))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if day.status == .rest {
+                                    Text("RIPOSO")
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("\(day.completedSets)/\(day.totalSets)")
+                                        .font(.caption.bold())
+                                    Text(day.status.title)
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(day.status == .completed ? accentColor : .secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(14)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            }
+        }
+    }
+
+    private func weekLabel(_ week: WorkoutWeekSummary) -> String {
+        let first = week.startDate.formatted(.dateTime.day().month(.wide))
+        let last = week.endDate.formatted(.dateTime.day().month(.wide))
+        return "\(first) – \(last)".uppercased()
+    }
+}
+
+struct MuscleVolumeSummary: View {
+    @Environment(\.gymAccentColor) private var accentColor
+    @ObservedObject var store: WorkoutStore
+
+    private var targets: [MuscleTarget] {
+        MuscleTarget.allCases.filter { target in
+            store.exercises.contains { $0.target == target && !$0.sessions.isEmpty }
+        }
+    }
+
+    var body: some View {
+        if !targets.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Volume ultimi 7 giorni").font(.headline)
+                Text("Peso × ripetizioni delle serie completate. Serve solo a monitorare l'allenamento.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(targets, id: \.self) { target in
+                    HStack {
+                        Text(target.title)
+                            .font(.caption.bold())
+                        Spacer()
+                        Text("\(format(store.weeklyVolume(for: target))) kg")
+                            .font(.caption.bold())
+                            .foregroundStyle(accentColor)
+                    }
+                }
+            }
+            .padding()
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        }
+    }
+
+    private func format(_ value: Double) -> String {
+        String(format: "%.0f", value)
     }
 }
 
@@ -659,68 +1152,155 @@ struct ExerciseHistoryView: View {
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
 
-    private var history: [WeightLog] { store.history(for: exercise) }
+    private var sessions: [ExerciseSession] { store.sessions(for: exercise) }
+    private var weightHistory: [WeightLog] { store.history(for: exercise) }
     private var currentWeight: Double { store.maxWeight(for: exercise) }
+    private var bestSession: ExerciseSession? { sessions.max(by: { $0.volume < $1.volume }) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(exercise.name).font(.largeTitle.bold())
-                    Text("\(exercise.target.title) • \(exercise.sets.count) serie")
+                    Text("\(exercise.target.title) • \(exercise.sets.filter { !$0.isBackOff }.count) serie • Scheda \(exercise.targetReps)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 12) {
                     DetailMetric(title: "Massimo", value: "\(format(currentWeight)) kg")
-                    DetailMetric(title: "Aggiornamenti", value: "\(history.count)")
+                    DetailMetric(title: "Sessioni", value: "\(sessions.count)")
+                    DetailMetric(title: "Volume totale", value: "\(format(store.totalVolume(for: exercise))) kg")
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Andamento peso").font(.headline)
-                    Text(history.isEmpty ? "Il punto mostra il peso attuale. I prossimi cambiamenti creeranno lo storico." : "Ogni nuovo peso confermato aggiunge un punto al grafico.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Chart(chartPoints) { item in
-                        LineMark(
-                            x: .value("Data", item.date),
-                            y: .value("Kg", item.weight)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(accentColor)
-
-                        PointMark(
-                            x: .value("Data", item.date),
-                            y: .value("Kg", item.weight)
-                        )
-                        .foregroundStyle(accentColor)
+                if let previous = sessions.dropLast().last,
+                   let current = sessions.last {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .foregroundStyle(accentColor)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Confronto ultima sessione")
+                                .font(.headline)
+                            Text("\(current.date.formatted(date: .abbreviated, time: .omitted)) vs \(previous.date.formatted(date: .abbreviated, time: .omitted))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Volume: \(format(previous.volume)) kg → \(format(current.volume)) kg")
+                                .font(.subheadline.bold())
+                        }
+                        Spacer()
                     }
-                    .chartYScale(domain: 0...300)
-                    .chartYAxis {
-                        AxisMarks(position: .leading, values: [0, 50, 100, 150, 200, 250, 300]) { value in
-                            AxisGridLine()
-                            AxisTick()
-                            AxisValueLabel { Text("\(value.as(Int.self) ?? 0) kg") }
+                    .padding()
+                    .background(accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                }
+
+                if !sessions.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Volume nel tempo").font(.headline)
+                        Chart(sessions) { session in
+                            LineMark(
+                                x: .value("Data", session.date),
+                                y: .value("Volume", session.volume)
+                            )
+                            .interpolationMethod(.catmullRom)
+                            .foregroundStyle(accentColor)
+
+                            PointMark(
+                                x: .value("Data", session.date),
+                                y: .value("Volume", session.volume)
+                            )
+                            .foregroundStyle(accentColor)
+                        }
+                        .frame(height: 230)
+
+                        Text("Volume = peso × ripetizioni delle serie completate. È un indicatore di monitoraggio, non una misura fisiologica.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                }
+
+                if let bestSession {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("Miglior sessione per volume").font(.headline)
+                        Text(bestSession.date.formatted(date: .complete, time: .omitted))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(bestSession.sets) { set in
+                            HStack {
+                                Text("S\(set.setIndex + 1)").font(.caption.bold()).frame(width: 30, alignment: .leading)
+                                Text("\(format(set.weight)) kg × \(set.reps)").font(.subheadline.bold())
+                                Spacer()
+                                Text("\(format(set.volume))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Divider()
+                        HStack {
+                            Text("Volume")
+                            Spacer()
+                            Text("\(format(bestSession.volume)) kg").bold()
                         }
                     }
-                    .frame(height: 300)
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
                 }
-                .padding()
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
 
-                if !history.isEmpty {
+                if !sessions.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Storico").font(.headline)
-                        ForEach(history.reversed()) { log in
-                            HStack {
-                                Text(log.date.formatted(date: .abbreviated, time: .shortened))
-                                Spacer()
-                                Text("\(format(log.weight)) kg").bold()
+                        Text("Storico sessioni").font(.headline)
+                        ForEach(sessions.reversed()) { session in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(session.date.formatted(date: .abbreviated, time: .omitted))
+                                        .font(.subheadline.bold())
+                                    Spacer()
+                                    Text("\(format(session.volume)) kg volume")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(accentColor)
+                                }
+
+                                ForEach(session.sets) { set in
+                                    HStack {
+                                        Text("S\(set.setIndex + 1)")
+                                            .font(.caption)
+                                            .frame(width: 28, alignment: .leading)
+                                        Text("\(format(set.weight)) kg × \(set.reps)")
+                                            .font(.caption.bold())
+                                        if set.isBackOff {
+                                            Text("BACK-OFF")
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(accentColor)
+                                        }
+                                        Spacer()
+                                    }
+                                }
                             }
+                            .padding(.vertical, 5)
                             Divider()
                         }
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                }
+
+                if !weightHistory.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Storico carichi").font(.headline)
+                        Chart(weightHistory) { log in
+                            LineMark(
+                                x: .value("Data", log.date),
+                                y: .value("Kg", log.weight)
+                            )
+                            .foregroundStyle(accentColor)
+                            PointMark(
+                                x: .value("Data", log.date),
+                                y: .value("Kg", log.weight)
+                            )
+                            .foregroundStyle(accentColor)
+                        }
+                        .frame(height: 220)
                     }
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
@@ -732,14 +1312,8 @@ struct ExerciseHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var chartPoints: [WeightLog] {
-        if !history.isEmpty { return history }
-        guard currentWeight > 0 else { return [] }
-        return [WeightLog(date: Date(), weight: currentWeight)]
-    }
-
-    private func format(_ v: Double) -> String {
-        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
+    private func format(_ value: Double) -> String {
+        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
     }
 }
 
@@ -943,6 +1517,10 @@ struct SettingsView: View {
     @ObservedObject var store: WorkoutStore
     @Binding var darkMode: Bool
     @Binding var accentColorName: String
+    @State private var exportDocument: BackupDocument?
+    @State private var showingExporter = false
+    @State private var showingImporter = false
+    @State private var backupMessage: String?
 
     var body: some View {
         Form {
@@ -970,8 +1548,30 @@ struct SettingsView: View {
             }
 
             Section("Dati") {
-                Text("I dati vengono salvati localmente sul telefono.")
-                Button("Richiedi notifiche") { RecoveryNotifications.shared.requestPermission() }
+                Text("I dati vengono salvati localmente sul telefono. Nessun account, cloud o server è necessario.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    guard let data = store.backupData() else {
+                        backupMessage = "Impossibile creare il backup."
+                        return
+                    }
+                    exportDocument = BackupDocument(data: data)
+                    showingExporter = true
+                } label: {
+                    Label("Esporta backup locale", systemImage: "square.and.arrow.up")
+                }
+
+                Button {
+                    showingImporter = true
+                } label: {
+                    Label("Importa backup locale", systemImage: "square.and.arrow.down")
+                }
+
+                Button("Richiedi notifiche") {
+                    RecoveryNotifications.shared.requestPermission()
+                }
             }
 
             Section("Settimana") {
@@ -986,6 +1586,65 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Impostazioni")
+        .fileExporter(
+            isPresented: $showingExporter,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: "GymApp-Backup.json"
+        ) { result in
+            if case .failure = result {
+                backupMessage = "Esportazione annullata o non riuscita."
+            }
+        }
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                do {
+                    let data = try Data(contentsOf: url)
+                    if store.importBackup(data: data) {
+                        backupMessage = "Backup importato correttamente."
+                    } else {
+                        backupMessage = "Il file non contiene un backup GymApp valido."
+                    }
+                } catch {
+                    backupMessage = "Impossibile leggere il file di backup."
+                }
+            case .failure:
+                backupMessage = "Importazione annullata o non riuscita."
+            }
+        }
+        .alert("Backup", isPresented: Binding(
+            get: { backupMessage != nil },
+            set: { if !$0 { backupMessage = nil } }
+        )) {
+            Button("OK") { backupMessage = nil }
+        } message: {
+            Text(backupMessage ?? "")
+        }
+    }
+}
+
+struct BackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    static var writableContentTypes: [UTType] { [.json] }
+
+    var data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }
 
