@@ -34,6 +34,8 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
     var reps: String
     var weight: Double
     var completed: Bool
+    /// Data e ora dell'ultima conferma della serie. Rimane nil finché non viene premuto ✓.
+    var completedAt: Date?
     var history: [WeightLog]
     var isBackOff: Bool
 
@@ -42,6 +44,7 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
         reps: String = "",
         weight: Double = 20,
         completed: Bool = false,
+        completedAt: Date? = nil,
         history: [WeightLog] = [],
         isBackOff: Bool = false
     ) {
@@ -49,12 +52,13 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
         self.reps = reps
         self.weight = weight
         self.completed = completed
+        self.completedAt = completedAt
         self.history = history
         self.isBackOff = isBackOff
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, reps, weight, completed, history, isBackOff
+        case id, reps, weight, completed, completedAt, history, isBackOff
     }
 
     init(from decoder: Decoder) throws {
@@ -63,6 +67,7 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
         reps = try c.decodeIfPresent(String.self, forKey: .reps) ?? ""
         weight = try c.decodeIfPresent(Double.self, forKey: .weight) ?? 20
         completed = try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
         history = try c.decodeIfPresent([WeightLog].self, forKey: .history) ?? []
         isBackOff = try c.decodeIfPresent(Bool.self, forKey: .isBackOff) ?? false
     }
@@ -75,13 +80,16 @@ struct SessionSetRecord: Codable, Equatable, Identifiable {
     let weight: Double
     let reps: Int
     let isBackOff: Bool
+    /// Opzionale per poter leggere lo storico creato dalle versioni precedenti.
+    let completedAt: Date?
 
-    init(id: UUID = UUID(), setIndex: Int, weight: Double, reps: Int, isBackOff: Bool = false) {
+    init(id: UUID = UUID(), setIndex: Int, weight: Double, reps: Int, isBackOff: Bool = false, completedAt: Date? = nil) {
         self.id = id
         self.setIndex = setIndex
         self.weight = weight
         self.reps = reps
         self.isBackOff = isBackOff
+        self.completedAt = completedAt
     }
 
     var volume: Double { weight * Double(reps) }

@@ -114,9 +114,45 @@ struct DashboardView: View {
                     }
                 }
 
-                WeeklyOverviewCard(store: store)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("GIORNO")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
 
-                DaySelector(store: store)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(store.days, id: \.self) { day in
+                                Button {
+                                    focusedDaySelection(day)
+                                } label: {
+                                    Text(day.prefix(3))
+                                        .font(.caption.bold())
+                                        .frame(minWidth: 54)
+                                        .padding(.vertical, 11)
+                                        .background(
+                                            store.selectedDay == day
+                                                ? accentColor
+                                                : accentColor.opacity(0.08),
+                                            in: RoundedRectangle(cornerRadius: 13)
+                                        )
+                                        .foregroundStyle(
+                                            store.selectedDay == day ? Color.white : Color.primary
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("SETTIMANA")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    WeeklyOverviewCard(store: store) { day in
+                        focusedDaySelection(day)
+                    }
+                }
 
                 HStack(spacing: 12) {
                     Metric(title: "Esercizi", value: "\(store.dayExercises.count)", icon: "figure.strengthtraining.traditional")
@@ -126,6 +162,26 @@ struct DashboardView: View {
 
                 SwiftUI.ProgressView(value: store.totalSets == 0 ? 0 : Double(store.completedSets) / Double(store.totalSets))
                     .tint(accentColor)
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("OGGI")
+                            .font(.caption.bold())
+                            .foregroundStyle(accentColor)
+                        Text(store.completedSets == 0
+                             ? "Pronto per iniziare"
+                             : "\(store.completedSets) di \(store.totalSets) serie completate")
+                            .font(.subheadline.bold())
+                    }
+                    Spacer()
+                    Image(systemName: store.totalSets > 0 && store.completedSets == store.totalSets
+                          ? "checkmark.seal.fill"
+                          : "bolt.fill")
+                        .font(.title3)
+                        .foregroundStyle(accentColor)
+                }
+                .padding(14)
+                .background(accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
 
                 if store.dayExercises.isEmpty {
                     EmptyDayView()
@@ -138,163 +194,17 @@ struct DashboardView: View {
             .padding()
         }
         .navigationTitle(store.selectedDay)
+        .onAppear { store.prepareDayForToday(store.selectedDay) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reset") { store.resetDay() }
             }
         }
     }
-}
 
-struct WeeklyOverviewCard: View {
-    @Environment(\.gymAccentColor) private var accentColor
-    @ObservedObject var store: WorkoutStore
-
-    private var days: [WeeklyDayInfo] { store.weeklyDays() }
-    private var completedSets: Int { store.weeklyCompletedSets() }
-    private var totalSets: Int { store.weeklyTotalSets() }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("SETTIMANA")
-                        .font(.caption.bold())
-                        .foregroundStyle(accentColor)
-                    Text(weekTitle)
-                        .font(.title2.bold())
-                }
-                Spacer()
-                Text("\(completedSets)/\(totalSets)")
-                    .font(.headline.bold())
-                    .foregroundStyle(accentColor)
-            }
-
-            HStack(spacing: 7) {
-                ForEach(days) { info in
-                    WeekDayMini(info: info, accentColor: accentColor)
-                }
-            }
-
-            SwiftUI.ProgressView(value: totalSets == 0 ? 0 : Double(completedSets) / Double(totalSets))
-                .tint(accentColor)
-
-            HStack {
-                Label("\(store.weeklyCompletedWorkouts()) allenamenti completati", systemImage: "checkmark.circle.fill")
-                Spacer()
-                Text("\(format(store.weeklyVolume(forWeekContaining: Date()))) kg volume")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.caption)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [accentColor.opacity(0.18), accentColor.opacity(0.05)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 24)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(accentColor.opacity(0.18)))
-    }
-
-    private var weekTitle: String {
-        let start = store.currentWeekStart
-        let end = Calendar.current.date(byAdding: .day, value: 6, to: start) ?? start
-        let a = start.formatted(.dateTime.day().month(.abbreviated))
-        let b = end.formatted(.dateTime.day().month(.abbreviated))
-        return "\(a) – \(b)"
-    }
-
-    private func format(_ value: Double) -> String {
-        String(format: "%.0f", value)
-    }
-}
-
-struct WeekDayMini: View {
-    let info: WeeklyDayInfo
-    let accentColor: Color
-
-    private var shortName: String {
-        switch info.dayName {
-        case "LUNEDÌ": return "LUN"
-        case "MARTEDÌ": return "MAR"
-        case "MERCOLEDÌ": return "MER"
-        case "GIOVEDÌ": return "GIO"
-        case "VENERDÌ": return "VEN"
-        case "SABATO": return "SAB"
-        case "DOMENICA": return "DOM"
-        default: return ""
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 5) {
-            Text(shortName)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
-            ZStack {
-                Circle()
-                    .fill(background)
-                    .frame(width: 31, height: 31)
-                Text(info.status == .completed ? "✓" : info.status == .rest ? "—" : info.status == .inProgress ? "•" : "○")
-                    .font(.caption.bold())
-                    .foregroundStyle(info.status == .completed || info.status == .inProgress ? accentColor : .secondary)
-            }
-            Text(info.date.formatted(.dateTime.day()))
-                .font(.caption2.bold())
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var background: Color {
-        switch info.status {
-        case .completed: return accentColor.opacity(0.20)
-        case .inProgress: return accentColor.opacity(0.10)
-        case .notStarted: return Color.secondary.opacity(0.08)
-        case .rest: return Color.secondary.opacity(0.04)
-        }
-    }
-}
-
-struct DaySelector: View {
-    @Environment(\.gymAccentColor) private var accentColor
-    @ObservedObject var store: WorkoutStore
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(store.weeklyDays()) { info in
-                    Button { store.selectedDay = info.dayName } label: {
-                        VStack(spacing: 4) {
-                            Text(short(info.dayName)).font(.caption2.bold())
-                            Text(info.date.formatted(.dateTime.day())).font(.headline.bold())
-                            Text(info.status == .rest ? "—" : info.status == .completed ? "✓" : "\(info.completedSets)/\(info.totalSets)")
-                                .font(.caption2.bold())
-                        }
-                        .frame(width: 52, height: 66)
-                        .foregroundStyle(store.selectedDay == info.dayName ? Color.white : .primary)
-                        .background(store.selectedDay == info.dayName ? accentColor : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 15))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private func short(_ day: String) -> String {
-        switch day {
-        case "LUNEDÌ": return "LUN"
-        case "MARTEDÌ": return "MAR"
-        case "MERCOLEDÌ": return "MER"
-        case "GIOVEDÌ": return "GIO"
-        case "VENERDÌ": return "VEN"
-        case "SABATO": return "SAB"
-        case "DOMENICA": return "DOM"
-        default: return day.prefix(3).uppercased()
-        }
+    private func focusedDaySelection(_ day: String) {
+        store.selectedDay = day
+        store.prepareDayForToday(day)
     }
 }
 
@@ -801,9 +711,8 @@ struct SetRow: View {
     private func completeSet() {
         commitWeight()
         commitReps()
-        // Una serie già completata resta completata anche se l'utente corregge
-        // peso o ripetizioni e ripreme ✓. Non viene creata una nuova serie.
-        if set.completed {
+        guard !set.completed else {
+            store.toggle(exercise.id, setID: set.id)
             focused.wrappedValue = nil
             return
         }
@@ -870,19 +779,17 @@ struct AnalyticsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Progressi").font(.largeTitle.bold())
-                Text("Controlla la settimana completa e poi entra nei singoli esercizi per vedere storico e performance.")
+                Text("Settimana reale da lunedì a domenica, serie completate e storico degli allenamenti.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                WeeklyOverviewCard(store: store)
-
-                WeekHistorySection(store: store)
+                WeeklyHistorySection(store: store)
 
                 MuscleVolumeSummary(store: store)
 
-                if !activeDays.isEmpty {
-                    Text("Giornate con scheda")
-                        .font(.title3.bold())
+                if activeDays.isEmpty {
+                    ContentUnavailableView("Nessun allenamento", systemImage: "chart.line.uptrend.xyaxis")
+                } else {
                     ForEach(activeDays, id: \.self) { day in
                         DayProgressCard(store: store, day: day) {
                             selectedDay = day
@@ -903,81 +810,175 @@ struct AnalyticsView: View {
                 }
             }
         }
-        .onAppear { store.ensureCurrentWeek() }
     }
 }
 
-struct WeekHistorySection: View {
+
+struct WeeklyOverviewCard: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
+    let action: (String) -> Void
+
+    private var week: WorkoutWeekSummary { store.currentWeekSummary() }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Storico settimane")
-                .font(.headline)
-            Text("Ogni settimana parte da lunedì e mantiene i dati delle sessioni precedenti.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(store.weekTitle())
+                        .font(.headline.bold())
+                    Text("Lunedì → Domenica")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(week.completedSets)/\(week.totalSets)")
+                        .font(.headline.bold())
+                    Text("serie")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
-            ForEach(store.recentWeekStarts(count: 8), id: \.self) { start in
-                let infos = store.weeklyDays(for: start)
-                let completedSets = infos.reduce(0) { $0 + $1.completedSets }
-                let totalSets = infos.reduce(0) { $0 + $1.totalSets }
-                let workouts = infos.filter { $0.status == .completed }.count
-                let volume = store.weeklyVolume(forWeekContaining: start)
-                let isCurrent = Calendar.current.isDate(start, inSameDayAs: store.currentWeekStart)
+            SwiftUI.ProgressView(value: week.progress)
+                .tint(accentColor)
 
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack {
-                        Text(weekTitle(start))
-                            .font(.subheadline.bold())
-                        if isCurrent {
-                            Text("ATTUALE")
+            HStack(spacing: 6) {
+                ForEach(week.days) { day in
+                    Button { action(day.day) } label: {
+                        VStack(spacing: 5) {
+                            Text(day.day.prefix(3))
                                 .font(.caption2.bold())
-                                .foregroundStyle(accentColor)
+                            Text(day.date.formatted(.dateTime.day()))
+                                .font(.headline.bold())
+                            Text(day.status.symbol)
+                                .font(.caption.bold())
+                            if day.totalSets > 0 {
+                                Text("\(day.completedSets)/\(day.totalSets)")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("-")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        Spacer()
-                        Text("\(completedSets)/\(totalSets) serie")
-                            .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(background(for: day), in: RoundedRectangle(cornerRadius: 12))
                     }
+                    .buttonStyle(.plain)
+                }
+            }
 
-                    HStack(spacing: 12) {
-                        Label("\(workouts) allenamenti", systemImage: "figure.strengthtraining.traditional")
-                        Spacer()
-                        Text("\(format(volume)) kg")
-                            .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Label("\(week.workoutDays) allenamenti", systemImage: "dumbbell.fill")
+                Spacer()
+                Label("\(week.completedWorkoutDays) completati", systemImage: "checkmark.seal.fill")
+            }
+            .font(.caption.bold())
+            .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(accentColor.opacity(0.12)))
+    }
+
+    private func background(for day: WorkoutDaySummary) -> Color {
+        switch day.status {
+        case .rest:
+            return Color.secondary.opacity(0.07)
+        case .completed:
+            return accentColor.opacity(0.18)
+        case .inProgress:
+            return accentColor.opacity(0.10)
+        case .notStarted:
+            return accentColor.opacity(0.05)
+        }
+    }
+}
+
+struct WeeklyHistorySection: View {
+    @Environment(\.gymAccentColor) private var accentColor
+    @ObservedObject var store: WorkoutStore
+    @State private var expandedWeekStart: Date?
+
+    private var weeks: [WorkoutWeekSummary] { store.historicalWeekSummaries() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("STORICO SETTIMANALE")
+                .font(.caption.bold())
+                .foregroundStyle(accentColor)
+
+            ForEach(Array(weeks.enumerated()), id: \.element.startDate) { index, week in
+                let isCurrent = Calendar.current.isDate(week.startDate, equalTo: store.startOfWeek(), toGranularity: .day)
+                VStack(alignment: .leading, spacing: 9) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            expandedWeekStart = expandedWeekStart == week.startDate ? nil : week.startDate
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(weekLabel(week))
+                                    .font(.headline.bold())
+                                Text("\(week.workoutDays) allenamenti • \(week.completedSets)/\(week.totalSets) serie")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if isCurrent {
+                                Text("ATTUALE")
+                                    .font(.system(size: 9, weight: .black))
+                                    .foregroundStyle(accentColor)
+                            }
+                            Image(systemName: expandedWeekStart == week.startDate ? "chevron.up" : "chevron.down")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .font(.caption)
+                    .buttonStyle(.plain)
 
-                    HStack(spacing: 5) {
-                        ForEach(infos) { info in
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(dayColor(info.status))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 6)
+                    SwiftUI.ProgressView(value: week.progress)
+                        .tint(accentColor)
+
+                    if expandedWeekStart == week.startDate {
+                        ForEach(week.days) { day in
+                            HStack(spacing: 9) {
+                                Text(day.day.prefix(3))
+                                    .font(.caption.bold())
+                                    .frame(width: 34, alignment: .leading)
+                                Text(day.date.formatted(.dateTime.day().month(.abbreviated)))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if day.status == .rest {
+                                    Text("RIPOSO")
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("\(day.completedSets)/\(day.totalSets)")
+                                        .font(.caption.bold())
+                                    Text(day.status.title)
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(day.status == .completed ? accentColor : .secondary)
+                                }
+                            }
                         }
                     }
                 }
-                .padding(13)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 17))
+                .padding(14)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
             }
         }
     }
 
-    private func weekTitle(_ start: Date) -> String {
-        let end = Calendar.current.date(byAdding: .day, value: 6, to: start) ?? start
-        return "\(start.formatted(.dateTime.day().month(.abbreviated))) – \(end.formatted(.dateTime.day().month(.abbreviated)))"
-    }
-
-    private func format(_ value: Double) -> String { String(format: "%.0f", value) }
-
-    private func dayColor(_ status: WeeklyDayStatus) -> Color {
-        switch status {
-        case .completed: return accentColor
-        case .inProgress: return accentColor.opacity(0.45)
-        case .notStarted: return Color.secondary.opacity(0.22)
-        case .rest: return Color.secondary.opacity(0.08)
-        }
+    private func weekLabel(_ week: WorkoutWeekSummary) -> String {
+        let first = week.startDate.formatted(.dateTime.day().month(.wide))
+        let last = week.endDate.formatted(.dateTime.day().month(.wide))
+        return "\(first) – \(last)".uppercased()
     }
 }
 
@@ -994,7 +995,7 @@ struct MuscleVolumeSummary: View {
     var body: some View {
         if !targets.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Volume settimana corrente").font(.headline)
+                Text("Volume ultimi 7 giorni").font(.headline)
                 Text("Peso × ripetizioni delle serie completate. Serve solo a monitorare l'allenamento.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

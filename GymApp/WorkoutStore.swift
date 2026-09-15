@@ -4,140 +4,87 @@ import Combine
 import WidgetKit
 #endif
 
+enum WorkoutDayStatus: String {
+    case rest
+    case notStarted
+    case inProgress
+    case completed
+
+    var title: String {
+        switch self {
+        case .rest: return "RIPOSO"
+        case .notStarted: return "NON INIZIATO"
+        case .inProgress: return "IN CORSO"
+        case .completed: return "COMPLETATO"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .rest: return "—"
+        case .notStarted: return "○"
+        case .inProgress: return "🟡"
+        case .completed: return "✓"
+        }
+    }
+}
+
+struct WorkoutDaySummary: Identifiable {
+    let id: String
+    let date: Date
+    let day: String
+    let exerciseCount: Int
+    let totalSets: Int
+    let completedSets: Int
+    let status: WorkoutDayStatus
+
+    var progress: Double {
+        totalSets > 0 ? Double(completedSets) / Double(totalSets) : 0
+    }
+}
+
+struct WorkoutWeekSummary {
+    let startDate: Date
+    let endDate: Date
+    let days: [WorkoutDaySummary]
+
+    var workoutDays: Int { days.filter { $0.status != .rest }.count }
+    var completedWorkoutDays: Int { days.filter { $0.status == .completed }.count }
+    var totalSets: Int { days.reduce(0) { $0 + $1.totalSets } }
+    var completedSets: Int { days.reduce(0) { $0 + $1.completedSets } }
+    var progress: Double { totalSets > 0 ? Double(completedSets) / Double(totalSets) : 0 }
+}
+
 @MainActor
 final class WorkoutStore: ObservableObject {
     @Published var selectedDay = "LUNEDÌ"
     @Published var exercises: [Exercise] = []
 
+    /// Settimana completa: la scheda può avere esercizi anche nel weekend, ma un giorno
+    /// senza esercizi viene mostrato esplicitamente come RIPOSO.
     let days = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
 
     private let key = GymShared.workoutsKey
     private let legacyKey = GymShared.legacyKey
-    private let weekMarkerKey = "gymapp.currentWeekStart"
 
     init() {
         load()
-        ensureCurrentWeek()
-        selectedDay = Self.weekdayName(for: Date()) ?? "LUNEDÌ"
         RecoveryNotifications.shared.requestPermission()
         if exercises.isEmpty {
             exercises = Self.initialSchedule()
             persist()
+        } else {
+            prepareDayForToday(selectedDay)
         }
     }
 
     var dayExercises: [Exercise] { exercises.filter { $0.day == selectedDay } }
     var totalSets: Int { dayExercises.reduce(0) { $0 + $1.sets.count } }
-    var completedSets: Int { dayExercises.reduce(0) { $0 + $1.sets.filter(\.completed).count } }
-
-    // MARK: - Settimana
-
-    var currentWeekStart: Date {
-        Self.startOfWeek(for: Date())
-    }
-
-    var currentWeekEnd: Date {
-        Calendar.current.date(byAdding: .day, value: 6, to: currentWeekStart) ?? currentWeekStart
-    }
-
-    func weekDates(containing date: Date = Date()) -> [Date] {
-        let start = Self.startOfWeek(for: date)
-        return (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: start) }
-    }
-
-    func ensureCurrentWeek() {
-        let start = Self.startOfWeek(for: Date())
-        let stored = UserDefaults.standard.object(forKey: weekMarkerKey) as? Date
-        if let stored, Calendar.current.isDate(stored, inSameDayAs: start) { return }
-
-        // Le sessioni storiche restano intatte. Si azzerano solo i flag
-        // temporanei delle serie per iniziare la nuova settimana pulita.
-        for i in exercises.indices {
-            for j in exercises[i].sets.indices {
-                exercises[i].sets[j].completed = false
-            }
+    /// Serie realmente completate nella giornata odierna, non semplicemente compilate.
+    var completedSets: Int {
+        dayExercises.reduce(0) { total, exercise in
+            total + (todaySession(for: exercise)?.sets.count ?? 0)
         }
-        UserDefaults.standard.set(start, forKey: weekMarkerKey)
-        persist()
-    }
-
-    func dayInfo(for date: Date) -> WeeklyDayInfo {
-        let day = Self.weekdayName(for: date) ?? ""
-        let dayExercises = exercises.filter { $0.day == day }
-        let plannedExercises = dayExercises.count
-        let plannedSets = dayExercises.reduce(0) { $0 + $1.sets.count }
-
-        guard plannedExercises > 0 else {
-            return WeeklyDayInfo(date: date, dayName: day, status: .rest, exercises: 0, completedSets: 0, totalSets: 0, volume: 0)
-        }
-
-        let calendar = Calendar.current
-        let completed: Int
-        let volume: Double
-
-        if calendar.isDateInToday(date) {
-            completed = dayExercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
-            volume = dayExercises.reduce(0) { $0 + todayVolume(for: $1) }
-        } else {
-            let records = dayExercises.flatMap { $0.sessions }.filter { calendar.isDate($0.date, inSameDayAs: date) }
-            completed = records.reduce(0) { $0 + $1.sets.count }
-            volume = records.reduce(0) { $0 + $1.volume }
-        }
-
-        let status: WeeklyDayStatus
-        if completed == 0 {
-            status = .notStarted
-        } else if completed >= plannedSets {
-            status = .completed
-        } else {
-            status = .inProgress
-        }
-
-        return WeeklyDayInfo(date: date, dayName: day, status: status, exercises: plannedExercises, completedSets: min(completed, plannedSets), totalSets: plannedSets, volume: volume)
-    }
-
-    func weeklyDays(for date: Date = Date()) -> [WeeklyDayInfo] {
-        weekDates(containing: date).map { dayInfo(for: $0) }
-    }
-
-    func weeklyCompletedSets(for date: Date = Date()) -> Int {
-        weeklyDays(for: date).reduce(0) { $0 + $1.completedSets }
-    }
-
-    func weeklyTotalSets(for date: Date = Date()) -> Int {
-        weeklyDays(for: date).reduce(0) { $0 + $1.totalSets }
-    }
-
-    func weeklyCompletedWorkouts(for date: Date = Date()) -> Int {
-        weeklyDays(for: date).filter { $0.status == .completed }.count
-    }
-
-    func weeklyVolume(forWeekContaining date: Date = Date()) -> Double {
-        let start = Self.startOfWeek(for: date)
-        let end = Calendar.current.date(byAdding: .day, value: 7, to: start) ?? date
-        return exercises.flatMap(\.sessions).filter { $0.date >= start && $0.date < end }.reduce(0) { $0 + $1.volume }
-    }
-
-    func recentWeekStarts(count: Int = 8, from date: Date = Date()) -> [Date] {
-        let start = Self.startOfWeek(for: date)
-        return (0..<max(1, count)).compactMap { offset in
-            Calendar.current.date(byAdding: .weekOfYear, value: -offset, to: start)
-        }
-    }
-
-    private static func startOfWeek(for date: Date) -> Date {
-        var calendar = Calendar.current
-        calendar.firstWeekday = 2 // lunedì
-        calendar.minimumDaysInFirstWeek = 4
-        return calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date)
-    }
-
-    private static func weekdayName(for date: Date) -> String? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "it_IT")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "EEEE"
-        return formatter.string(from: date).uppercased()
     }
 
     // MARK: - Serie
@@ -255,6 +202,7 @@ final class WorkoutStore: ObservableObject {
 
         let willComplete = !set.completed
         exercises[ei].sets[si].completed = willComplete
+        exercises[ei].sets[si].completedAt = willComplete ? Date() : nil
         updateTodaySession(forExerciseAt: ei)
         persist()
 
@@ -485,8 +433,9 @@ final class WorkoutStore: ObservableObject {
     }
 
     func weeklyVolume(for target: MuscleTarget, referenceDate: Date = Date()) -> Double {
-        let start = Self.startOfWeek(for: referenceDate)
-        let end = Calendar.current.date(byAdding: .day, value: 7, to: start) ?? referenceDate
+        let calendar = Calendar.current
+        let start = startOfWeek(for: referenceDate)
+        let end = calendar.date(byAdding: .day, value: 7, to: start) ?? referenceDate
         return exercises
             .filter { $0.target == target }
             .flatMap { $0.sessions }
@@ -506,7 +455,8 @@ final class WorkoutStore: ObservableObject {
                 setIndex: offset,
                 weight: set.weight,
                 reps: reps,
-                isBackOff: set.isBackOff
+                isBackOff: set.isBackOff,
+                completedAt: set.completedAt ?? date
             )
         }
 
@@ -528,6 +478,113 @@ final class WorkoutStore: ObservableObject {
         guard exercises.indices.contains(index) else { return }
         let calendar = Calendar.current
         exercises[index].sessions.removeAll { calendar.isDateInToday($0.date) }
+    }
+
+    // MARK: - Settimana lunedì → domenica
+
+    func startOfWeek(for date: Date = Date()) -> Date {
+        var calendar = Calendar.current
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        return calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date)
+    }
+
+    func weekDates(for date: Date = Date()) -> [Date] {
+        let start = startOfWeek(for: date)
+        let calendar = Calendar.current
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    func dayName(for date: Date) -> String {
+        let index = Calendar.current.component(.weekday, from: date)
+        switch index {
+        case 2: return "LUNEDÌ"
+        case 3: return "MARTEDÌ"
+        case 4: return "MERCOLEDÌ"
+        case 5: return "GIOVEDÌ"
+        case 6: return "VENERDÌ"
+        case 7: return "SABATO"
+        default: return "DOMENICA"
+        }
+    }
+
+    func weekTitle(for date: Date = Date()) -> String {
+        let dates = weekDates(for: date)
+        guard let first = dates.first, let last = dates.last else { return "SETTIMANA" }
+        let firstText = first.formatted(.dateTime.day().month(.wide))
+        let lastText = last.formatted(.dateTime.day().month(.wide))
+        return "SETTIMANA \(firstText) – \(lastText)".uppercased()
+    }
+
+    func weekDaySummary(for date: Date) -> WorkoutDaySummary {
+        let day = dayName(for: date)
+        let dayExercises = exercises.filter { $0.day == day }
+        let total = dayExercises.reduce(0) { $0 + $1.sets.count }
+        let completed = dayExercises.reduce(0) { total, exercise in
+            total + (exercise.sessions.first(where: { Calendar.current.isDate($0.date, inSameDayAs: date) })?.sets.count ?? 0)
+        }
+        let status: WorkoutDayStatus
+        if dayExercises.isEmpty {
+            status = .rest
+        } else if completed == 0 {
+            status = .notStarted
+        } else if completed >= total {
+            status = .completed
+        } else {
+            status = .inProgress
+        }
+
+        return WorkoutDaySummary(
+            id: "\(day)-\(Calendar.current.startOfDay(for: date).timeIntervalSince1970)",
+            date: date,
+            day: day,
+            exerciseCount: dayExercises.count,
+            totalSets: total,
+            completedSets: min(completed, total),
+            status: status
+        )
+    }
+
+    func currentWeekSummary(referenceDate: Date = Date()) -> WorkoutWeekSummary {
+        let dates = weekDates(for: referenceDate)
+        let start = dates.first ?? referenceDate
+        let end = dates.last ?? referenceDate
+        return WorkoutWeekSummary(startDate: start, endDate: end, days: dates.map { weekDaySummary(for: $0) })
+    }
+
+    func historicalWeekSummaries() -> [WorkoutWeekSummary] {
+        var starts = Set<Date>()
+        starts.insert(startOfWeek())
+        for exercise in exercises {
+            for session in exercise.sessions {
+                starts.insert(startOfWeek(for: session.date))
+            }
+        }
+        return starts.sorted(by: >).map { start in
+            let dates = weekDates(for: start)
+            return WorkoutWeekSummary(
+                startDate: dates.first ?? start,
+                endDate: dates.last ?? start,
+                days: dates.map { weekDaySummary(for: $0) }
+            )
+        }
+    }
+
+    /// Allinea la UI del giorno selezionato alla sessione reale di oggi.
+    /// Così una serie completata la settimana scorsa non rimane spuntata nella nuova settimana.
+    func prepareDayForToday(_ day: String) {
+        let calendar = Calendar.current
+        for i in exercises.indices where exercises[i].day == day {
+            let today = exercises[i].sessions.first(where: { calendar.isDateInToday($0.date) })
+            let completedIDs = Set(today?.sets.map(\.id) ?? [])
+            for j in exercises[i].sets.indices {
+                exercises[i].sets[j].completed = completedIDs.contains(exercises[i].sets[j].id)
+                if !exercises[i].sets[j].completed {
+                    exercises[i].sets[j].completedAt = nil
+                }
+            }
+        }
+        persist()
     }
 
     // MARK: - Backup locale
@@ -668,44 +725,6 @@ final class WorkoutStore: ObservableObject {
             e("MERCOLEDÌ", "French Press manubri", "10 RM", 3, "TRICIPITI", "Tricipite", .triceps, "1:30")
         ]
     }
-}
-
-enum WeeklyDayStatus: String {
-    case rest
-    case notStarted
-    case inProgress
-    case completed
-
-    var title: String {
-        switch self {
-        case .rest: return "RIPOSO"
-        case .notStarted: return "NON INIZIATO"
-        case .inProgress: return "IN CORSO"
-        case .completed: return "COMPLETATO"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .rest: return "—"
-        case .notStarted: return "○"
-        case .inProgress: return "🟡"
-        case .completed: return "✓"
-        }
-    }
-}
-
-struct WeeklyDayInfo: Identifiable {
-    let date: Date
-    let dayName: String
-    let status: WeeklyDayStatus
-    let exercises: Int
-    let completedSets: Int
-    let totalSets: Int
-    let volume: Double
-
-    var id: Date { date }
-    var progress: Double { totalSets == 0 ? 0 : Double(completedSets) / Double(totalSets) }
 }
 
 enum PerformanceStatus: String {
