@@ -13,7 +13,7 @@ enum GymShared {
 }
 
 struct WidgetWorkoutSet: Codable { let reps: String; let weight: Double; let completed: Bool }
-struct WidgetExercise: Codable { let name: String; let sets: [WidgetWorkoutSet]; let recovery: String }
+struct WidgetExercise: Codable { let name: String; let targetReps: String; let sets: [WidgetWorkoutSet]; let recovery: String }
 
 enum WidgetDay {
     static let all = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
@@ -27,6 +27,6 @@ enum WidgetDataReader {
     static func todayExercises() -> [WidgetExercise] {
         guard let data = GymShared.defaults()?.data(forKey: GymShared.workoutsKey), let all = try? JSONDecoder().decode([Exercise].self, from: data) else { return [] }
         let day = WidgetDay.today()
-        return all.filter { $0.day == day }.map { WidgetExercise(name: $0.name, sets: $0.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) }, recovery: $0.recovery) }
+        return all.filter { $0.day == day }.map { WidgetExercise(name: $0.name, targetReps: $0.targetReps, sets: $0.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) }, recovery: $0.recovery) }
     }
 }
