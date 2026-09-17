@@ -166,12 +166,22 @@ enum WidgetDataReader {
     }
 
     static func todayProgress(at date: Date = Date()) -> (completedSets: Int, totalSets: Int, completedExercises: Int, totalExercises: Int) {
+        let weekday = currentWeekday(at: date)
+        let snapshot = currentSnapshot()
+
+        // Fonte primaria: i numeri già calcolati dall'app per ogni giorno.
+        // Non dipende dal decoder del modello Exercise nel widget.
+        if let direct = snapshot?.dailyProgress {
+            let normalized = normalizedDay(weekday)
+            if let value = direct.first(where: { normalizedDay($0.key) == normalized })?.value {
+                return (value.completedSets, value.totalSets, value.completedExercises, value.totalExercises)
+            }
+        }
+
         let exercises = todayExercises(at: date)
         let totalSets = exercises.reduce(0) { $0 + $1.sets.count }
         let completedSets = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
-        let completedExercises = exercises.filter {
-            !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed)
-        }.count
+        let completedExercises = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
         return (completedSets, totalSets, completedExercises, exercises.count)
     }
 }

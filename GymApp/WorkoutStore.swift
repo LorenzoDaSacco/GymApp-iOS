@@ -391,6 +391,12 @@ final class WorkoutStore: ObservableObject {
     func maxWeight(for exercise: Exercise) -> Double { max(history(for: exercise).map(\.weight).max() ?? 0, exercise.sets.map(\.weight).max() ?? 0) }
     func persistChanges() { persist() }
 
+    private func normalizedWidgetDay(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "it_IT"))
+            .uppercased()
+    }
+
     private func persist() {
         guard let data = try? JSONEncoder().encode(exercises) else { return }
         UserDefaults.standard.set(data, forKey: key)
@@ -414,12 +420,32 @@ final class WorkoutStore: ObservableObject {
                 recovery: exercise.recovery
             )
         }
+
+        // Il widget non deve ricostruire i conteggi decodificando tutta la scheda.
+        // L'app calcola qui gli stessi numeri mostrati in alto nella Scheda per
+        // ogni giorno della settimana e li salva nel contenitore App Group.
+        // In questo modo il widget legge direttamente i dati già pronti.
+        var dailyProgress: [String: GymWidgetDayProgress] = [:]
+        for weekday in weekdayNames {
+            let dayExercises = exercises.filter { normalizedWidgetDay($0.day) == normalizedWidgetDay(weekday) }
+            let totalSets = dayExercises.reduce(0) { $0 + $1.sets.count }
+            let completedSets = dayExercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
+            let completedExercises = dayExercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
+            dailyProgress[weekday] = GymWidgetDayProgress(
+                completedExercises: completedExercises,
+                totalExercises: dayExercises.count,
+                completedSets: completedSets,
+                totalSets: totalSets
+            )
+        }
+
         GymShared.writeWidgetSnapshot(
             referenceDate: today,
             realStartDate: today,
             scheduleMode: scheduleMode.rawValue,
             sequenceToWeekday: sequenceToWeekday,
-            exercises: widgetExercises
+            exercises: widgetExercises,
+            dailyProgress: dailyProgress
         )
     }
 

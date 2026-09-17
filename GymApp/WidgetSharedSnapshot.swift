@@ -1,5 +1,12 @@
 import Foundation
 
+struct GymWidgetDayProgress: Codable {
+    let completedExercises: Int
+    let totalExercises: Int
+    let completedSets: Int
+    let totalSets: Int
+}
+
 struct GymWidgetSnapshot: Codable {
     let updatedAt: Date
     let referenceDate: Date
@@ -7,13 +14,14 @@ struct GymWidgetSnapshot: Codable {
     let scheduleMode: String
     let sequenceToWeekday: [String: String]
     let exercises: [WidgetExercise]
+    let dailyProgress: [String: GymWidgetDayProgress]
 }
 
 extension GymShared {
     static let widgetSnapshotKey = "gymapp.widget.snapshot.v2"
 
-    static func writeWidgetSnapshot(referenceDate: Date, realStartDate: Date, scheduleMode: String, sequenceToWeekday: [String: String], exercises: [WidgetExercise]) {
-        let snapshot = GymWidgetSnapshot(updatedAt: Date(), referenceDate: referenceDate, realStartDate: realStartDate, scheduleMode: scheduleMode, sequenceToWeekday: sequenceToWeekday, exercises: exercises)
+    static func writeWidgetSnapshot(referenceDate: Date, realStartDate: Date, scheduleMode: String, sequenceToWeekday: [String: String], exercises: [WidgetExercise], dailyProgress: [String: GymWidgetDayProgress]) {
+        let snapshot = GymWidgetSnapshot(updatedAt: Date(), referenceDate: referenceDate, realStartDate: realStartDate, scheduleMode: scheduleMode, sequenceToWeekday: sequenceToWeekday, exercises: exercises, dailyProgress: dailyProgress)
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         defaults()?.set(data, forKey: widgetSnapshotKey)
         defaults()?.synchronize()
