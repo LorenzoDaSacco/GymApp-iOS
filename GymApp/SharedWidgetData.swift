@@ -67,15 +67,30 @@ enum WidgetDay {
 }
 
 enum WidgetDataReader {
+    private static let weekdayNames = WidgetDay.all
+
+    private static func normalizedDay(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "it_IT"))
+            .uppercased()
+    }
+
     private static func actualWeekdayName(at date: Date = Date()) -> String {
+        // Questa è la sola fonte per sapere che giorno è: il calendario reale
+        // dell'iPhone. Calendar.autoupdatingCurrent segue automaticamente
+        // fuso orario e cambio di data a mezzanotte.
         WidgetDay.today(calendar: .autoupdatingCurrent, date: date)
     }
 
     private static func rawExercises() -> [Exercise] {
+        // Il widget legge prima ed esclusivamente l'App Group condiviso.
+        // UserDefaults.standard è usato solo come fallback per installazioni
+        // precedenti in cui i dati erano stati salvati fuori dall'App Group.
         let defaults = GymShared.defaults()
         let data = defaults?.data(forKey: GymShared.workoutsKey)
-            ?? UserDefaults.standard.data(forKey: GymShared.workoutsKey)
             ?? defaults?.data(forKey: GymShared.legacyKey)
+            ?? UserDefaults.standard.data(forKey: GymShared.workoutsKey)
             ?? UserDefaults.standard.data(forKey: GymShared.legacyKey)
         guard let data, let all = try? JSONDecoder().decode([Exercise].self, from: data) else { return [] }
         return all
@@ -85,30 +100,37 @@ enum WidgetDataReader {
         GymShared.readWidgetSnapshot()
     }
 
-    /// Restituisce il nome interno dell'allenamento corrispondente al vero
-    /// giorno della settimana dell'iPhone. Nessuna data virtuale viene usata.
+    private static func sequenceMapFromSharedDefaults() -> [String: String] {
+        let key = "gymapp.sequenceMap.v1"
+        let defaults = GymShared.defaults()
+        return (defaults?.dictionary(forKey: key) as? [String: String])
+            ?? (UserDefaults.standard.dictionary(forKey: key) as? [String: String])
+            ?? [:]
+    }
+
+    /// Restituisce l'identificatore dell'allenamento che corrisponde al vero
+    /// giorno della settimana dell'iPhone.
     private static func workoutDayForWeekday(at date: Date) -> String? {
         let weekday = actualWeekdayName(at: date)
-        guard let snapshot = currentSnapshot() else { return weekday }
+        let normalizedWeekday = normalizedDay(weekday)
+        let snapshot = currentSnapshot()
 
-        if snapshot.scheduleMode == ScheduleMode.trainingDays.rawValue {
-            // Modalità GIORNO 1, 2, 3...: usa l'associazione salvata nelle
-            // impostazioni (es. GIORNO 1 -> GIOVEDÌ).
-            if let trainingDay = snapshot.sequenceToWeekday.first(where: { $0.value == weekday })?.key {
-                return trainingDay
-            }
-            // Fallback per dati creati da una versione precedente: se gli
-            // esercizi sono ancora nominati con i giorni della settimana,
-            // usiamo direttamente quel giorno.
-            if snapshot.exercises.contains(where: { $0.day == weekday }) {
-                return weekday
-            }
-            return nil
+        // Calendario settimanale: GIOVEDÌ significa sempre GIOVEDÌ.
+        if snapshot?.scheduleMode != ScheduleMode.trainingDays.rawValue {
+            return weekday
         }
 
-        // Modalità calendario settimanale: il giorno dell'iPhone è
-        // direttamente il giorno della scheda.
-        return weekday
+        // Modalità GIORNO 1, 2, 3...: il calendario delle impostazioni associa
+        // ogni GIORNO X a un giorno reale della settimana.
+        let map = snapshot?.sequenceToWeekday.isEmpty == false
+            ? snapshot!.sequenceToWeekday
+            : sequenceMapFromSharedDefaults()
+
+        if let trainingDay = map.first(where: { normalizedDay($0.value) == normalizedWeekday })?.key {
+            return trainingDay
+        }
+
+        return nil
     }
 
     static func allExercises() -> [Exercise] { rawExercises() }
@@ -125,10 +147,8 @@ enum WidgetDataReader {
         let targetDay = currentWorkoutDay(at: date)
         let snapshot = currentSnapshot()
 
-        // Preferiamo i dati live dell'App Group. Così il widget vede subito
-        // l'ultimo allenamento/peso/serie salvato dall'app.
-        let source: [WidgetExercise]
         let raw = rawExercises()
+        let source: [WidgetExercise]
         if !raw.isEmpty {
             source = raw.map { exercise in
                 WidgetExercise(
@@ -143,13 +163,11 @@ enum WidgetDataReader {
         }
 
         guard let targetDay else { return [] }
-        let matches = source.filter { $0.day == targetDay }
-        if !matches.isEmpty { return matches }
+        let normalizedTarget = normalizedDay(targetDay)
 
-        // Ultimo fallback: se il mapping era stato salvato con un formato
-        // precedente, prova comunque il vero giorno della settimana.
-        let weekday = actualWeekdayName(at: date)
-        return source.filter { $0.day == weekday }
+        // Confronto normalizzato: evita che accenti, maiuscole/minuscole o
+        // vecchi salvataggi (es. GIOVEDI invece di GIOVEDÌ) facciano risultare 0.
+        return source.filter { normalizedDay($0.day) == normalizedTarget }
     }
 
     static func todayProgress(at date: Date = Date()) -> (completedSets: Int, totalSets: Int, completedExercises: Int, totalExercises: Int) {
@@ -160,4 +178,3 @@ enum WidgetDataReader {
         return (completedSets, totalSets, completedExercises, exercises.count)
     }
 }
-

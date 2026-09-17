@@ -24,7 +24,8 @@ struct GymDayProvider: TimelineProvider {
             guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
             entries.append(GymDayEntry(date: date, day: WidgetDataReader.currentWorkoutDayLabel(at: date), exercises: WidgetDataReader.todayExercises(at: date)))
         }
-        completion(Timeline(entries: entries, policy: .atEnd))
+        let nextMidnight = calendar.date(byAdding: .day, value: 1, to: start) ?? now.addingTimeInterval(24 * 60 * 60)
+        completion(Timeline(entries: entries, policy: .after(nextMidnight)))
     }
 }
 
@@ -57,7 +58,8 @@ struct GymProgressProvider: TimelineProvider {
             let progress = WidgetDataReader.todayProgress(at: date)
             entries.append(GymProgressEntry(date: date, day: WidgetDataReader.currentWorkoutDayLabel(at: date), completedSets: progress.completedSets, totalSets: progress.totalSets, completedExercises: progress.completedExercises, totalExercises: progress.totalExercises))
         }
-        completion(Timeline(entries: entries, policy: .atEnd))
+        let nextMidnight = calendar.date(byAdding: .day, value: 1, to: start) ?? now.addingTimeInterval(24 * 60 * 60)
+        completion(Timeline(entries: entries, policy: .after(nextMidnight)))
     }
 }
 
