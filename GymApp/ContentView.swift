@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import Combine
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
     case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
@@ -86,11 +87,17 @@ struct ContentView: View {
         .tint(accentColor)
         .environment(\.gymAccentColor, accentColor)
         .preferredColorScheme(darkMode ? .dark : .light)
+        .onAppear {
+            store.refreshSelectedDayForToday()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 RecoveryNotifications.shared.cleanupExpired()
-                store.syncCurrentDaySelection()
+                store.refreshSelectedDayForToday()
             }
+        }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            if scenePhase == .active { store.refreshSelectedDayForToday() }
         }
     }
 }
@@ -783,10 +790,11 @@ struct AddExerciseView: View {
                 Picker("Giorno", selection: $store.selectedDay) {
                     ForEach(store.days, id: \.self) { Text($0) }
                 }
-                if store.scheduleMode == .trainingDays && store.trainingDayCount < 7 {
+                if store.scheduleMode == .trainingDays {
                     Button { store.addTrainingDay() } label: {
                         Label("Aggiungi nuovo giorno", systemImage: "plus.circle.fill")
                     }
+                    .disabled(store.trainingDayCount >= 7)
                 }
             }
             Section("Esercizio") {
@@ -882,20 +890,34 @@ struct SettingsView: View {
                         get: { store.trainingDayCount },
                         set: { store.setTrainingDayCount($0) }
                     ), in: 1...7)
-                    Text("Associa ogni GIORNO a un giorno della settimana. L'app usa automaticamente il calendario dell'iPhone e cambia giorno allo scoccare della mezzanotte.")
+
+                    Text("Calendario automatico")
+                        .font(.subheadline.bold())
+                    Text("Associa ogni GIORNO all'effettivo giorno della settimana. L'app aggiorna automaticamente l'allenamento quando cambia la data, anche a mezzanotte.")
                         .font(.caption).foregroundStyle(.secondary)
-                    ForEach(store.days, id: \.self) { trainingDay in
-                        Picker(trainingDay, selection: Binding(
-                            get: { store.weekdayForTrainingDay(trainingDay) },
-                            set: { store.setTrainingDayWeekday(trainingDay, weekday: $0) }
+
+                    ForEach(store.days, id: \.self) { day in
+                        Picker(day, selection: Binding<String?>(
+                            get: { store.weekdayForTrainingDay(day) },
+                            set: { store.setTrainingDayWeekday(day, weekday: $0) }
                         )) {
-                            ForEach(store.weekdayNamesForSettings, id: \.self) { weekday in
-                                Text(weekday).tag(weekday)
+                            Text("Non assegnato").tag(String?.none)
+                            ForEach(store.calendarWeekdays, id: \.self) { weekday in
+                                Text(weekday.capitalized).tag(String?(weekday))
                             }
                         }
                     }
+
+                    Button { store.addTrainingDay() } label: {
+                        Label("Aggiungi nuovo giorno", systemImage: "plus.circle.fill")
+                    }
+                    .disabled(store.trainingDayCount >= 7)
+
+                    Text("Oggi: \(store.selectedDay)")
+                        .font(.caption.bold())
+                        .foregroundStyle(accentColor)
                 } else {
-                    Text("Sono disponibili i 7 giorni della settimana. I giorni senza esercizi restano semplicemente vuoti.")
+                    Text("Sono disponibili i 7 giorni della settimana. Il calendario usa automaticamente il giorno reale dell'iPhone e aggiorna la scheda al cambio di giornata.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
