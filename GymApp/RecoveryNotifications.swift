@@ -7,7 +7,8 @@ final class RecoveryNotifications {
     static let shared = RecoveryNotifications()
     private init() {}
 
-    private let endDatesKey = "gym.recovery.endDates.v2"
+    private let endDatesKey = "gym.recovery.endDates.v3"
+    private let notificationPrefix = "gym-recovery-"
 
     func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -15,18 +16,22 @@ final class RecoveryNotifications {
 
     @discardableResult
     func start(for setID: UUID, exerciseName: String, recovery: String) -> Date? {
-        // Every completed set gets a recovery timer. If an exercise has no recovery
-        // value yet, use the same safe default shown by the UI instead of silently failing.
         let recoveryText = recovery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "2:00" : recovery
         guard let seconds = Self.seconds(from: recoveryText), seconds > 0 else { return nil }
 
+        // Remove expired/old Live Activities before creating the next one. This keeps one
+        // recovery countdown visible at a time and prevents a pile-up on the Lock Screen.
+        cleanupExpiredActivities()
+        endAllLiveActivities(except: setID.uuidString)
+
         let id = notificationID(for: setID)
         let endDate = Date().addingTimeInterval(seconds)
-
         let content = UNMutableNotificationContent()
-        content.title = "Recupero terminato"
-        content.body = "Puoi ripartire: \(exerciseName)"
+        content.title = "Recupero"
+        content.body = "\(exerciseName) · timer in corso"
         content.sound = .default
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 1.0
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
@@ -40,7 +45,10 @@ final class RecoveryNotifications {
     }
 
     func cancel(for setID: UUID) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationID(for: setID)])
+        let center = UNUserNotificationCenter.current()
+        let id = notificationID(for: setID)
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+        center.removeDeliveredNotifications(withIdentifiers: [id])
         removeEndDate(for: setID)
         endLiveActivity(setID: setID)
     }
@@ -49,35 +57,37 @@ final class RecoveryNotifications {
         storedEndDates()[setID.uuidString].flatMap(Date.init(timeIntervalSince1970:))
     }
 
+    func cleanupExpiredActivities() {
+        let now = Date()
+        let dates = storedEndDates()
+        for (id, timestamp) in dates where timestamp <= now.timeIntervalSince1970 {
+            if let uuid = UUID(uuidString: id) {
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notificationID(for: uuid)])
+                endLiveActivity(setID: uuid)
+            }
+        }
+        var remaining = dates
+        remaining = remaining.filter { $0.value > now.timeIntervalSince1970 }
+        UserDefaults.standard.set(remaining, forKey: endDatesKey)
+    }
+
     static func seconds(from text: String) -> TimeInterval? {
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return nil }
         if raw.contains(":") {
             let parts = raw.split(separator: ":").compactMap { Double($0) }
-            if parts.count == 2 {
-                return parts[0] * 60 + parts[1]
-            }
+            if parts.count == 2 { return parts[0] * 60 + parts[1] }
         }
-        if let n = Double(raw.replacingOccurrences(of: ",", with: ".")) {
-            return n * 60
-        }
+        if let n = Double(raw.replacingOccurrences(of: ",", with: ".")) { return n * 60 }
         return nil
     }
 
     private func startLiveActivity(setID: UUID, exerciseName: String, recovery: String, endDate: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-
-        // One Live Activity per completed set. Starting Wednesday, Saturday, etc.
-        // follows exactly the same path as Monday; there is intentionally no day check.
         endLiveActivity(setID: setID)
 
         let attributes = RecoveryActivityAttributes(setID: setID.uuidString)
-        let state = RecoveryActivityAttributes.ContentState(
-            endDate: endDate,
-            exerciseName: exerciseName,
-            recoveryText: recovery
-        )
-
+        let state = RecoveryActivityAttributes.ContentState(endDate: endDate, exerciseName: exerciseName, recoveryText: recovery)
         do {
             _ = try Activity<RecoveryActivityAttributes>.request(
                 attributes: attributes,
@@ -85,22 +95,24 @@ final class RecoveryNotifications {
                 pushType: nil
             )
         } catch {
-            // Local notification remains active even if Live Activities are disabled.
+            // The local notification remains available if Live Activities are unavailable.
+        }
+    }
+
+    private func endAllLiveActivities(except id: String) {
+        for activity in Activity<RecoveryActivityAttributes>.activities where activity.attributes.setID != id {
+            Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
     }
 
     private func endLiveActivity(setID: UUID) {
         let id = setID.uuidString
         for activity in Activity<RecoveryActivityAttributes>.activities where activity.attributes.setID == id {
-            Task {
-                await activity.end(nil, dismissalPolicy: .immediate)
-            }
+            Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
     }
 
-    private func notificationID(for setID: UUID) -> String {
-        "gym-recovery-\(setID.uuidString)"
-    }
+    private func notificationID(for setID: UUID) -> String { "\(notificationPrefix)\(setID.uuidString)" }
 
     private func storedEndDates() -> [String: TimeInterval] {
         UserDefaults.standard.dictionary(forKey: endDatesKey) as? [String: TimeInterval] ?? [:]

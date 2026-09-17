@@ -1,8 +1,5 @@
 import SwiftUI
 import Charts
-import PhotosUI
-import PDFKit
-import UIKit
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
     case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
@@ -55,7 +52,6 @@ struct ContentView: View {
     @EnvironmentObject private var store: WorkoutStore
     @AppStorage("gymapp.darkMode") private var darkMode = true
     @AppStorage("gymapp.accentColor") private var accentColorName = AccentColorOption.purple.rawValue
-    @State private var showingImporter = false
     @State private var selectedTab = 0
 
     private var accentColor: Color { AccentColorOption(rawValue: accentColorName)?.color ?? .purple }
@@ -63,7 +59,7 @@ struct ContentView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                DashboardView(store: store, showImporter: $showingImporter)
+                DashboardView(store: store)
             }
             .tabItem { Label("Scheda", systemImage: "list.bullet.clipboard") }
             .tag(0)
@@ -86,7 +82,6 @@ struct ContentView: View {
             .tabItem { Label("Impostazioni", systemImage: "gearshape") }
             .tag(3)
         }
-        .sheet(isPresented: $showingImporter) { SheetImportView(store: store) }
         .tint(accentColor)
         .environment(\.gymAccentColor, accentColor)
         .preferredColorScheme(darkMode ? .dark : .light)
@@ -96,24 +91,29 @@ struct ContentView: View {
 struct DashboardView: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
-    @Binding var showImporter: Bool
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 HStack {
-                    Text("GYM TRACKER PRO")
-                        .font(.system(size: 26, weight: .black))
-                    Spacer()
-                    Button { showImporter = true } label: {
-                        Image(systemName: "camera.fill")
-                            .font(.title3)
-                            .padding(10)
-                            .background(accentColor.opacity(0.15), in: .circle)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("GYM TRACKER PRO")
+                            .font(.system(size: 26, weight: .black))
+                        Text("Allenamento di oggi")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Image(systemName: "dumbbell.fill")
+                        .font(.title3)
+                        .padding(10)
+                        .background(accentColor.opacity(0.15), in: .circle)
                 }
 
-                Picker("Giorno", selection: $store.selectedDay) {
+                Picker("Giorno", selection: Binding(
+                    get: { store.selectedDisplayDay },
+                    set: { store.selectDisplayDay($0) }
+                )) {
                     ForEach(store.days, id: \.self) { Text($0) }
                 }
                 .pickerStyle(.menu)
@@ -138,7 +138,7 @@ struct DashboardView: View {
             }
             .padding()
         }
-        .navigationTitle(store.selectedDay)
+        .navigationTitle(store.selectedDisplayDay)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reset") { store.resetDay() }
@@ -191,9 +191,43 @@ struct ExerciseCard: View {
                     Text(exercise.name).font(.headline)
                     Text(exercise.group).font(.caption.bold()).foregroundStyle(accentColor)
                     Text(exercise.focus).font(.caption).foregroundStyle(.secondary)
+                    Text(exercise.repScheme == .general
+                         ? "Scheda: \(exercise.sets.count) × \(exercise.generalTargetReps)"
+                         : "Scheda: \(exercise.targetRepsBySet.map { $0.isEmpty ? exercise.generalTargetReps : $0 }.joined(separator: " · "))")
+                        .font(.caption2.bold())
+                        .foregroundStyle(accentColor)
                 }
                 Spacer()
                 Button(editing ? "Fine" : "Modifica") { editing.toggle() }
+            }
+
+            if editing && exercise.repScheme == .specific {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Ripetizioni previste per serie")
+                        .font(.caption.bold())
+                    ForEach(exercise.sets.indices, id: \.self) { index in
+                        HStack {
+                            Text("Serie \(index + 1)")
+                                .font(.caption)
+                            TextField("es. 8-10", text: Binding(
+                                get: { targetText[index] ?? exercise.targetReps(for: index) },
+                                set: { targetText[index] = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 95)
+                            .focused($focused, equals: SetFieldFocus(setID: exercise.sets[index].id, field: .target))
+                            .onChange(of: focused) { newFocus in
+                                if newFocus != SetFieldFocus(setID: exercise.sets[index].id, field: .target) {
+                                    let value = targetText[index] ?? exercise.targetReps(for: index)
+                                    store.setTargetReps(value, exerciseID: exercise.id, setIndex: index)
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+                .padding(10)
+                .background(accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
             }
 
             RecoveryTimerSection(
@@ -384,6 +418,12 @@ struct RecoveryCountdownView: View {
     }
 }
 
+struct SetFieldFocus: Hashable {
+    let setID: UUID
+    let field: Field
+    enum Field: Hashable { case reps, weight, target }
+}
+
 struct SetRow: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
@@ -393,93 +433,113 @@ struct SetRow: View {
     let editing: Bool
     @Binding var weightText: [UUID: String]
     @Binding var repsText: [UUID: String]
-    var focused: FocusState<UUID?>.Binding
+    var focused: FocusState<SetFieldFocus?>.Binding
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text("S\(index + 1)").font(.caption.bold()).frame(width: 30)
-            TextField(set.reps, text: Binding(
+        HStack(spacing: 8) {
+            Text("S\(index + 1)")
+                .font(.caption.bold())
+                .frame(width: 28)
+
+            TextField(exercise.targetReps(for: index), text: Binding(
                 get: { repsText[set.id] ?? set.reps },
-                set: { repsText[set.id] = $0 }
+                set: { repsText[set.id] = String($0.filter(\.isNumber).prefix(3)) }
             ))
+            .keyboardType(.numberPad)
             .textFieldStyle(.roundedBorder)
-            .frame(width: 75)
-            .focused(focused, equals: set.id)
+            .frame(width: 68)
+            .focused($focused, equals: SetFieldFocus(setID: set.id, field: .reps))
             .disabled(!editing)
-            .onChange(of: focused.wrappedValue) { newFocus in
-                if newFocus != set.id { commitReps() }
+            .onChange(of: focused) { newFocus in
+                if newFocus != SetFieldFocus(setID: set.id, field: .reps) { commitReps() }
             }
 
             if set.isBackOff {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Text(format(store.backOffWeight(exerciseID: exercise.id)))
                         .font(.body.bold())
-                        .frame(width: 75, alignment: .trailing)
                     Text("kg")
                         .font(.caption.bold())
-                        .foregroundStyle(accentColor)
-                    Text("Back-off −20%")
+                    Text("−20%")
                         .font(.caption2.bold())
-                        .foregroundStyle(accentColor)
                 }
+                .foregroundStyle(accentColor)
                 .padding(.vertical, 9)
                 .padding(.horizontal, 8)
                 .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
             } else {
                 TextField("kg", text: Binding(
-                    get: {
-                        weightText[set.id] ?? (set.weight == 0 ? "" : String(format: "%.1f", set.weight).replacingOccurrences(of: ".0", with: ""))
-                    },
-                    set: { weightText[set.id] = $0 }
+                    get: { weightText[set.id] ?? format(set.weight) },
+                    set: { newValue in
+                        if newValue.isEmpty {
+                            weightText[set.id] = format(set.weight)
+                        } else {
+                            weightText[set.id] = newValue
+                        }
+                    }
                 ))
                 .keyboardType(.decimalPad)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 75)
-                .focused(focused, equals: set.id)
+                .frame(width: 72)
+                .focused($focused, equals: SetFieldFocus(setID: set.id, field: .weight))
                 .disabled(!editing)
                 .onSubmit { commitWeight() }
-                .onChange(of: focused.wrappedValue) { if $0 == nil { commitWeight() } }
-
-                Text("kg")
-                    .font(.caption.bold())
-                    .foregroundStyle(accentColor)
-                    .frame(width: 22, alignment: .leading)
+                .onChange(of: focused) { newFocus in
+                    if newFocus != SetFieldFocus(setID: set.id, field: .weight) { commitWeight() }
+                }
             }
 
-            Button { store.toggle(exercise.id, setID: set.id) } label: {
+            Button {
+                commitReps()
+                commitWeight()
+                focused = nil
+                store.toggle(exercise.id, setID: set.id)
+            } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
             }
             .buttonStyle(.plain)
-            Spacer()
+            .disabled(!canComplete)
+
+            Spacer(minLength: 0)
         }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Fine") { focused.wrappedValue = nil }
+                Button("Fine") { focused = nil }
             }
         }
     }
 
-    private func format(_ v: Double) -> String {
-        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
+    private var canComplete: Bool {
+        let repsValue = Int(repsText[set.id] ?? set.reps) ?? 0
+        let rawWeight = weightText[set.id] ?? format(set.weight)
+        let weightValue = Double(rawWeight.replacingOccurrences(of: ",", with: ".")) ?? set.weight
+        return repsValue > 0 && weightValue > 0
+    }
+
+    private func format(_ value: Double) -> String {
+        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
     }
 
     private func commitReps() {
         let value = repsText[set.id] ?? set.reps
-        guard value != set.reps else { return }
-        store.setReps(value, exerciseID: exercise.id, setID: set.id)
+        let filtered = String(value.filter(\.isNumber).prefix(3))
+        guard filtered != set.reps else { return }
+        store.setReps(filtered, exerciseID: exercise.id, setID: set.id)
     }
 
     private func commitWeight() {
-        let raw = weightText[set.id] ?? ""
+        guard !set.isBackOff else { return }
+        let raw = weightText[set.id] ?? format(set.weight)
         let normalized = raw.replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized) else {
-            if raw.isEmpty { store.updateWeight(0, exerciseID: exercise.id, setID: set.id, saveHistory: false) }
+        guard let value = Double(normalized), value >= 0 else {
+            weightText[set.id] = format(set.weight)
             return
         }
         store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-        weightText[set.id] = String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
+        // Keep the edited value isolated to this set; never rewrite the other rows.
+        weightText[set.id] = format(value)
     }
 }
 
@@ -491,7 +551,7 @@ struct AnalyticsView: View {
     @State private var selectedDay: String?
 
     private var activeDays: [String] {
-        store.days.filter { day in store.exercises.contains { $0.day == day } }
+        store.days.filter { !store.exercises(forDisplayDay: $0).isEmpty }
     }
 
     var body: some View {
@@ -534,7 +594,7 @@ struct DayProgressCard: View {
     let day: String
     let action: () -> Void
 
-    private var exercises: [Exercise] { store.exercises.filter { $0.day == day } }
+    private var exercises: [Exercise] { store.exercises(forDisplayDay: day) }
     private var totalSets: Int { exercises.reduce(0) { $0 + $1.sets.count } }
     private var muscles: String {
         Array(Set(exercises.map { $0.target.title })).prefix(3).joined(separator: " • ")
@@ -604,7 +664,7 @@ struct DayProgressView: View {
     @ObservedObject var store: WorkoutStore
     let day: String
 
-    private var exercises: [Exercise] { store.exercises.filter { $0.day == day } }
+    private var exercises: [Exercise] { store.exercises(forDisplayDay: day) }
 
     var body: some View {
         List {
@@ -654,12 +714,19 @@ struct DayProgressView: View {
     }
 }
 
+struct SessionChartPoint: Identifiable {
+    let id: UUID
+    let date: Date
+    let volume: Double
+}
+
 struct ExerciseHistoryView: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
 
     private var history: [WeightLog] { store.history(for: exercise) }
+    private var sessions: [ExerciseSession] { store.sessions(for: exercise) }
     private var currentWeight: Double { store.maxWeight(for: exercise) }
 
     var body: some View {
@@ -674,45 +741,87 @@ struct ExerciseHistoryView: View {
 
                 HStack(spacing: 12) {
                     DetailMetric(title: "Massimo", value: "\(format(currentWeight)) kg")
-                    DetailMetric(title: "Aggiornamenti", value: "\(history.count)")
+                    DetailMetric(title: "Sessioni", value: "\(sessions.count)")
+                    DetailMetric(title: "Volume", value: formatVolume(store.totalVolume(for: exercise)))
+                }
+
+                if let comparison = store.performance(for: exercise) {
+                    PerformanceDetailCard(comparison: comparison, accentColor: accentColor)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Andamento peso").font(.headline)
-                    Text(history.isEmpty ? "Il punto mostra il peso attuale. I prossimi cambiamenti creeranno lo storico." : "Ogni nuovo peso confermato aggiunge un punto al grafico.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Chart(chartPoints) { item in
-                        LineMark(
-                            x: .value("Data", item.date),
-                            y: .value("Kg", item.weight)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(accentColor)
-
-                        PointMark(
-                            x: .value("Data", item.date),
-                            y: .value("Kg", item.weight)
-                        )
-                        .foregroundStyle(accentColor)
+                    HStack {
+                        Text("Volume per sessione").font(.headline)
+                        Spacer()
+                        Text("kg × reps").font(.caption2).foregroundStyle(.secondary)
                     }
-                    .chartYScale(domain: 0...300)
-                    .chartYAxis {
-                        AxisMarks(position: .leading, values: [0, 50, 100, 150, 200, 250, 300]) { value in
-                            AxisGridLine()
-                            AxisTick()
-                            AxisValueLabel { Text("\(value.as(Int.self) ?? 0) kg") }
+
+                    if sessions.isEmpty {
+                        Text("Completa almeno una serie per iniziare lo storico.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 150)
+                    } else {
+                        Chart(chartPoints) { item in
+                            LineMark(
+                                x: .value("Data", item.date),
+                                y: .value("Volume", item.volume)
+                            )
+                            .interpolationMethod(.linear)
+
+                            PointMark(
+                                x: .value("Data", item.date),
+                                y: .value("Volume", item.volume)
+                            )
+                            .symbolSize(38)
                         }
+                        .chartYScale(domain: .automatic(includesZero: true))
+                        .chartYAxis {
+                            AxisMarks(position: .leading) { value in
+                                AxisGridLine()
+                                AxisValueLabel {
+                                    if let number = value.as(Double.self) {
+                                        Text(formatVolume(number))
+                                    }
+                                }
+                            }
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: min(5, max(2, chartPoints.count)))) { value in
+                                AxisGridLine(stroke: StrokeStyle(lineWidth: 0))
+                                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                            }
+                        }
+                        .frame(height: 230)
                     }
-                    .frame(height: 300)
                 }
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
 
+                if !sessions.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Sessioni recenti").font(.headline)
+                        ForEach(sessions.reversed()) { session in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(session.date.formatted(date: .abbreviated, time: .omitted)).font(.subheadline.bold())
+                                    Spacer()
+                                    Text(formatVolume(session.totalVolume)).font(.subheadline.bold()).foregroundStyle(accentColor)
+                                }
+                                Text(session.sets.map { "S\($0.setIndex + 1) \(format($0.weight))kg × \($0.reps)" }.joined(separator: "   "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Divider()
+                        }
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                }
+
                 if !history.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Storico").font(.headline)
+                        Text("Storico modifiche peso").font(.headline)
                         ForEach(history.reversed()) { log in
                             HStack {
                                 Text(log.date.formatted(date: .abbreviated, time: .shortened))
@@ -732,14 +841,54 @@ struct ExerciseHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var chartPoints: [WeightLog] {
-        if !history.isEmpty { return history }
-        guard currentWeight > 0 else { return [] }
-        return [WeightLog(date: Date(), weight: currentWeight)]
+    private var chartPoints: [SessionChartPoint] {
+        sessions.map { SessionChartPoint(id: $0.id, date: $0.date, volume: $0.totalVolume) }
     }
 
     private func format(_ v: Double) -> String {
         String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
+    }
+
+    private func formatVolume(_ v: Double) -> String {
+        if v >= 1000 { return String(format: "%.1fk", v / 1000).replacingOccurrences(of: ".0", with: "") }
+        return String(format: "%.0f", v)
+    }
+}
+
+struct PerformanceDetailCard: View {
+    let comparison: PerformanceComparison
+    let accentColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(comparison.status.title).font(.headline.bold())
+                Spacer()
+                Text(comparison.volumeDeltaPercent >= 0 ? "+\(String(format: "%.1f", comparison.volumeDeltaPercent))%" : "\(String(format: "%.1f", comparison.volumeDeltaPercent))%")
+                    .font(.caption.bold())
+            }
+            Text("Confronto con la sessione precedente: vengono confrontati peso e ripetizioni della stessa serie.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(comparison.sets, id: \.current.id) { pair in
+                HStack {
+                    Text("S\(pair.current.setIndex + 1)")
+                    Spacer()
+                    Text("\(format(pair.previous.weight)) × \(pair.previous.reps)")
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "arrow.right")
+                        .font(.caption)
+                    Text("\(format(pair.current.weight)) × \(pair.current.reps)").bold()
+                }
+                .font(.caption)
+            }
+        }
+        .padding()
+        .background(accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    private func format(_ value: Double) -> String {
+        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
     }
 }
 
@@ -767,6 +916,8 @@ struct AddExerciseView: View {
     let onAdded: () -> Void
     @State private var name = ""
     @State private var reps = "8-10"
+    @State private var specificReps: [String] = ["8-10", "8-10", "8-10"]
+    @State private var repScheme: RepScheme = .general
     @State private var sets = 3
     @State private var recovery = "2:00"
     @State private var weights: [String] = ["20", "20", "20"]
@@ -782,20 +933,37 @@ struct AddExerciseView: View {
     var body: some View {
         Form {
             Section("Giorno") {
-                Picker("Giorno", selection: $store.selectedDay) {
+                Picker("Giorno", selection: Binding(
+                    get: { store.selectedDisplayDay },
+                    set: { store.selectDisplayDay($0) }
+                )) {
                     ForEach(store.days, id: \.self) { Text($0) }
                 }
             }
             Section("Esercizio") {
                 TextField("Nome", text: $name).focused($field)
-                TextField("Ripetizioni", text: $reps)
+                Picker("Schema ripetizioni", selection: $repScheme) {
+                    ForEach(RepScheme.allCases, id: \.self) { scheme in
+                        Text(scheme.title).tag(scheme)
+                    }
+                }
+                if repScheme == .general {
+                    TextField("Ripetizioni", text: $reps)
+                } else {
+                    ForEach(0..<sets, id: \.self) { i in
+                        TextField("Serie \(i + 1) · reps", text: Binding(
+                            get: { specificReps.indices.contains(i) ? specificReps[i] : reps },
+                            set: {
+                                if specificReps.count <= i { specificReps += Array(repeating: reps, count: i - specificReps.count + 1) }
+                                specificReps[i] = $0
+                            }
+                        ))
+                    }
+                }
                 Stepper("Serie normali: \(sets)", value: $sets, in: 1...20)
                     .onChange(of: sets) { newValue in
-                        if weights.count < newValue {
-                            weights += Array(repeating: "20", count: newValue - weights.count)
-                        } else {
-                            weights = Array(weights.prefix(newValue))
-                        }
+                        if weights.count < newValue { weights += Array(repeating: "20", count: newValue - weights.count) } else { weights = Array(weights.prefix(newValue)) }
+                        if specificReps.count < newValue { specificReps += Array(repeating: reps, count: newValue - specificReps.count) } else { specificReps = Array(specificReps.prefix(newValue)) }
                     }
                 Toggle("Aggiungi back-off −20%", isOn: $backOffEnabled)
                     .tint(accentColor)
@@ -837,11 +1005,13 @@ struct AddExerciseView: View {
                 let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmedName.isEmpty else { return }
                 let ws = weights.map { Double($0.replacingOccurrences(of: ",", with: ".")) ?? 0 }
-                store.addExercise(day: store.selectedDay, name: trimmedName, reps: reps, weights: ws, recovery: recovery, backOffEnabled: backOffEnabled, manualTarget: needsMuscleSelection ? selectedMuscle : nil)
+                store.addExercise(day: store.selectedDay, name: trimmedName, reps: reps, weights: ws, recovery: recovery, backOffEnabled: backOffEnabled, manualTarget: needsMuscleSelection ? selectedMuscle : nil, repScheme: repScheme, targetRepsBySet: repScheme == .specific ? specificReps : nil)
                 field = false
                 onAdded()
                 name = ""
                 reps = "8-10"
+                specificReps = ["8-10", "8-10", "8-10"]
+                repScheme = store.repSchemePreference
                 sets = 3
                 recovery = "2:00"
                 weights = ["20", "20", "20"]
@@ -856,83 +1026,11 @@ struct AddExerciseView: View {
             }
         }
         .navigationTitle("Aggiungi esercizio")
+        .onAppear { repScheme = store.repSchemePreference }
     }
 
     private func formatWeight(_ v: Double) -> String {
         String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
-    }
-}
-
-// MARK: - IMPORTA SCHEDA
-
-struct SheetImportView: View {
-    @Environment(\.gymAccentColor) private var accentColor
-    @ObservedObject var store: WorkoutStore
-    @StateObject private var importer = SheetImporter()
-    @Environment(\.dismiss) private var dismiss
-    @State private var camera = false
-    @State private var photoItem: PhotosPickerItem?
-    @State private var showingDoc = false
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    HStack {
-                        Button("📷 Foto") { camera = true }.buttonStyle(.borderedProminent)
-                        Button("📄 PDF") { showingDoc = true }.buttonStyle(.bordered)
-                    }
-                    Text("Oppure scegli una foto dalla galleria")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label("Scegli foto", systemImage: "photo")
-                    }
-                    .buttonStyle(.bordered)
-                    .onChange(of: photoItem) { item in
-                        if let item {
-                            Task {
-                                if let data = try? await item.loadTransferable(type: Data.self),
-                                   let img = UIImage(data: data) {
-                                    importer.analyze(image: img)
-                                }
-                            }
-                        }
-                    }
-
-                    if importer.isBusy { ProgressView("Analizzo la scheda…") }
-                    if !importer.items.isEmpty {
-                        Text("Controlla prima di importare").font(.headline)
-                        ForEach(importer.items) { item in
-                            VStack(alignment: .leading) {
-                                Text(item.name).bold()
-                                Text("\(item.day) · \(item.sets) serie · \(item.reps) · recupero \(item.recovery.isEmpty ? "—" : item.recovery)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Button("Importa") { store.addImported(item) }.buttonStyle(.borderedProminent)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                        }
-                    }
-                    if !importer.recognizedText.isEmpty {
-                        DisclosureGroup("Testo riconosciuto") {
-                            Text(importer.recognizedText).font(.caption).textSelection(.enabled)
-                        }
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("Importa scheda")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("Chiudi") { dismiss() } }
-            }
-            .sheet(isPresented: $camera) { CameraPicker { image in importer.analyze(image: image) } }
-            .fileImporter(isPresented: $showingDoc, allowedContentTypes: [.pdf], allowsMultipleSelection: false) { result in
-                if case .success(let urls) = result, let url = urls.first { importer.analyze(pdfURL: url) }
-            }
-        }
     }
 }
 
@@ -952,9 +1050,7 @@ struct SettingsView: View {
                 Picker("Colore principale", selection: $accentColorName) {
                     ForEach(AccentColorOption.allCases) { option in
                         HStack {
-                            Circle()
-                                .fill(option.color)
-                                .frame(width: 12, height: 12)
+                            Circle().fill(option.color).frame(width: 12, height: 12)
                             Text(option.title)
                         }
                         .tag(option.rawValue)
@@ -964,7 +1060,44 @@ struct SettingsView: View {
                 HStack {
                     Text("Tema attuale")
                     Spacer()
-                    Text(darkMode ? "Scuro" : "Chiaro")
+                    Text(darkMode ? "Scuro" : "Chiaro").foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Organizzazione scheda") {
+                Picker("Calendario allenamenti", selection: Binding(
+                    get: { store.scheduleMode },
+                    set: { store.scheduleMode = $0 }
+                )) {
+                    ForEach(ScheduleMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+
+                Text(store.scheduleMode == .weekdays
+                     ? "L'allenamento viene mostrato come LUNEDÌ, MARTEDÌ, MERCOLEDÌ…"
+                     : "L'allenamento viene mostrato come GIORNO 1, GIORNO 2, GIORNO 3… e non dipende dal giorno della settimana.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Ripetizioni") {
+                Picker("Schema", selection: Binding(
+                    get: { store.repSchemePreference },
+                    set: { store.applyRepSchemeToAll($0) }
+                )) {
+                    ForEach(RepScheme.allCases, id: \.self) { scheme in
+                        Text(scheme.title).tag(scheme)
+                    }
+                }
+
+                if store.repSchemePreference == .general {
+                    Text("Una prescrizione unica per tutte le serie, ad esempio 4 × 8-10.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Ogni serie può avere la propria prescrizione, ad esempio 10 · 8 · 8 · 6.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -974,12 +1107,12 @@ struct SettingsView: View {
                 Button("Richiedi notifiche") { RecoveryNotifications.shared.requestPermission() }
             }
 
-            Section("Settimana") {
+            Section("Scheda") {
                 ForEach(store.days, id: \.self) { day in
                     HStack {
                         Text(day)
                         Spacer()
-                        Text("\(store.exercises.filter { $0.day == day }.count) esercizi")
+                        Text("\(store.exercises(forDisplayDay: day).count) esercizi")
                             .foregroundStyle(.secondary)
                     }
                 }

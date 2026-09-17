@@ -8,6 +8,18 @@ struct GymDayEntry: TimelineEntry {
     let exercises: [WidgetExercise]
 }
 
+struct GymProgressEntry: TimelineEntry {
+    let date: Date
+    let completed: Int
+    let total: Int
+}
+
+struct GymExerciseProgressEntry: TimelineEntry {
+    let date: Date
+    let completed: Int
+    let total: Int
+}
+
 struct GymDayProvider: TimelineProvider {
     func placeholder(in context: Context) -> GymDayEntry { GymDayEntry(date: Date(), day: WidgetDay.today(), exercises: []) }
     func getSnapshot(in context: Context, completion: @escaping (GymDayEntry) -> Void) {
@@ -16,7 +28,37 @@ struct GymDayProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymDayEntry>) -> Void) {
         let now = Date()
         let entry = GymDayEntry(date: now, day: WidgetDay.today(), exercises: WidgetDataReader.todayExercises())
-        let next = Calendar.current.date(byAdding: .minute, value: 15, to: now) ?? now.addingTimeInterval(900)
+        let next = Calendar.current.date(byAdding: .minute, value: 5, to: now) ?? now.addingTimeInterval(300)
+        completion(Timeline(entries: [entry], policy: .after(next)))
+    }
+}
+
+struct GymProgressProvider: TimelineProvider {
+    func placeholder(in context: Context) -> GymProgressEntry { GymProgressEntry(date: Date(), completed: 0, total: 0) }
+    func getSnapshot(in context: Context, completion: @escaping (GymProgressEntry) -> Void) {
+        let counts = WidgetDataReader.completedSetsCount()
+        completion(GymProgressEntry(date: Date(), completed: counts.completed, total: counts.total))
+    }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<GymProgressEntry>) -> Void) {
+        let now = Date()
+        let counts = WidgetDataReader.completedSetsCount()
+        let entry = GymProgressEntry(date: now, completed: counts.completed, total: counts.total)
+        let next = Calendar.current.date(byAdding: .minute, value: 5, to: now) ?? now.addingTimeInterval(300)
+        completion(Timeline(entries: [entry], policy: .after(next)))
+    }
+}
+
+struct GymExerciseProgressProvider: TimelineProvider {
+    func placeholder(in context: Context) -> GymExerciseProgressEntry { GymExerciseProgressEntry(date: Date(), completed: 0, total: 0) }
+    func getSnapshot(in context: Context, completion: @escaping (GymExerciseProgressEntry) -> Void) {
+        let counts = WidgetDataReader.completedExercisesCount()
+        completion(GymExerciseProgressEntry(date: Date(), completed: counts.completed, total: counts.total))
+    }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<GymExerciseProgressEntry>) -> Void) {
+        let now = Date()
+        let counts = WidgetDataReader.completedExercisesCount()
+        let entry = GymExerciseProgressEntry(date: now, completed: counts.completed, total: counts.total)
+        let next = Calendar.current.date(byAdding: .minute, value: 5, to: now) ?? now.addingTimeInterval(300)
         completion(Timeline(entries: [entry], policy: .after(next)))
     }
 }
@@ -37,7 +79,7 @@ struct SchedaOggiWidgetView: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text(exercise.name).font(.caption.bold()).lineLimit(1)
                         Spacer()
-                        Text("\(exercise.sets.count)×\(exercise.sets.first?.reps ?? "")")
+                        Text("\(exercise.sets.count) serie")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
@@ -47,6 +89,38 @@ struct SchedaOggiWidgetView: View {
                 }
             }
         }.padding()
+    }
+}
+
+struct ProgressWidgetView: View {
+    let entry: GymProgressEntry
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "checkmark.circle.fill").font(.title2)
+            Text("SERIE").font(.caption.bold()).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Text("\(entry.completed)/\(entry.total)")
+                .font(.system(size: 31, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.7)
+            Text("completate oggi").font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding()
+    }
+}
+
+struct ExerciseProgressWidgetView: View {
+    let entry: GymExerciseProgressEntry
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "dumbbell.fill").font(.title2)
+            Text("ESERCIZI").font(.caption.bold()).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Text("\(entry.completed)/\(entry.total)")
+                .font(.system(size: 31, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.7)
+            Text("completati oggi").font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding()
     }
 }
 
@@ -61,7 +135,6 @@ struct RecoveryLiveActivityView: View {
                 Spacer()
                 Text(context.state.exerciseName).font(.caption).lineLimit(1)
             }
-
             HStack(alignment: .firstTextBaseline) {
                 Text(timerInterval: Date()...context.state.endDate, countsDown: true)
                     .font(.system(size: 30, weight: .bold, design: .monospaced))
@@ -69,9 +142,7 @@ struct RecoveryLiveActivityView: View {
                 Spacer()
                 Text("restante").font(.caption).foregroundStyle(.secondary)
             }
-
             ProgressView(timerInterval: Date()...context.state.endDate, countsDown: true)
-                .tint(.red)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -86,12 +157,8 @@ struct RecoveryLiveActivityWidget: Widget {
             RecoveryLiveActivityView(context: context)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: "timer")
-                }
-                DynamicIslandExpandedRegion(.center) {
-                    Text("RECUPERO").font(.caption.bold())
-                }
+                DynamicIslandExpandedRegion(.leading) { Image(systemName: "timer") }
+                DynamicIslandExpandedRegion(.center) { Text("RECUPERO").font(.caption.bold()) }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(timerInterval: Date()...context.state.endDate, countsDown: true)
                         .font(.system(.caption, design: .monospaced).bold())
@@ -99,7 +166,6 @@ struct RecoveryLiveActivityWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     ProgressView(timerInterval: Date()...context.state.endDate, countsDown: true)
-                        .tint(.red)
                 }
             } compactLeading: {
                 Image(systemName: "timer")
@@ -123,8 +189,32 @@ struct SchedaOggiWidget: Widget {
             SchedaOggiWidgetView(entry: entry)
         }
         .configurationDisplayName("Scheda di oggi")
-        .description("Mostra automaticamente la scheda del giorno corrente.")
+        .description("Mostra gli esercizi del giorno corrente.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+struct SerieCompletateWidget: Widget {
+    let kind = "SerieCompletateWidget"
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: GymProgressProvider()) { entry in
+            ProgressWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Serie completate")
+        .description("Mostra quante serie hai completato oggi.")
+        .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
+struct EserciziCompletatiWidget: Widget {
+    let kind = "EserciziCompletatiWidget"
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: GymExerciseProgressProvider()) { entry in
+            ExerciseProgressWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Esercizi completati")
+        .description("Mostra quanti esercizi hai completato oggi.")
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
 
@@ -132,6 +222,8 @@ struct SchedaOggiWidget: Widget {
 struct GymWidgetsBundle: WidgetBundle {
     var body: some Widget {
         SchedaOggiWidget()
+        SerieCompletateWidget()
+        EserciziCompletatiWidget()
         RecoveryLiveActivityWidget()
     }
 }
