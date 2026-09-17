@@ -64,6 +64,7 @@ final class WorkoutStore: ObservableObject {
         didSet { UserDefaults.standard.set(selectedDay, forKey: "gymapp.selectedDay") }
     }
     @Published var exercises: [Exercise] = []
+    private var sessionHistory: [ExerciseSession] = []
     @Published var scheduleMode: ScheduleMode = .weekdays {
         didSet {
             UserDefaults.standard.set(scheduleMode.rawValue, forKey: "gymapp.scheduleMode")
@@ -94,6 +95,8 @@ final class WorkoutStore: ObservableObject {
             selectedDay = saved
         }
         load()
+        loadSessionHistory()
+        migrateCurrentCompletedSetsIntoHistoryIfNeeded()
         RecoveryNotifications.shared.requestPermission()
         if exercises.isEmpty {
             exercises = Self.initialSchedule()
@@ -140,6 +143,9 @@ final class WorkoutStore: ObservableObject {
             exercises[ei].sets[si].history.append(WeightLog(weight: weight))
         }
         refreshBackOff(ei)
+        if exercises[ei].sets[si].completed {
+            updateTodaySession(forExerciseAt: ei)
+        }
         persist()
     }
 
@@ -148,6 +154,9 @@ final class WorkoutStore: ObservableObject {
               let si = exercises[ei].sets.firstIndex(where: { $0.id == setID }) else { return }
         let filtered = reps.filter { $0.isNumber }
         exercises[ei].sets[si].reps = String(filtered.prefix(3))
+        if exercises[ei].sets[si].completed {
+            updateTodaySession(forExerciseAt: ei)
+        }
         persist()
     }
 
@@ -247,6 +256,7 @@ final class WorkoutStore: ObservableObject {
 
         exercises[ei].sets[si].completed = willComplete
         exercises[ei].sets[si].completedAt = willComplete ? Date() : nil
+        updateTodaySession(forExerciseAt: ei)
         persist()
 
         let exercise = exercises[ei]
@@ -341,7 +351,9 @@ final class WorkoutStore: ObservableObject {
     // MARK: Progressi
 
     func sessions(for exercise: Exercise) -> [ExerciseSession] {
-        buildSessions(for: exercise).sorted { $0.date < $1.date }
+        sessionHistory
+            .filter { $0.exerciseID == exercise.id }
+            .sorted { $0.date < $1.date }
     }
 
     func latestSession(for exercise: Exercise) -> ExerciseSession? { sessions(for: exercise).last }
@@ -353,25 +365,44 @@ final class WorkoutStore: ObservableObject {
     }
 
     func performance(for exercise: Exercise) -> PerformanceComparison? {
-        guard let current = latestSession(for: exercise), let previous = previousSession(for: exercise) else { return nil }
-        let pairs = zip(previous.sets.sorted { $0.setIndex < $1.setIndex }, current.sets.sorted { $0.setIndex < $1.setIndex }).map { SetPerformanceComparison(current: $1, previous: $0) }
-        guard !pairs.isEmpty, current.sets.count >= previous.sets.count else { return nil }
+        guard let current = latestSession(for: exercise),
+              let previous = previousSession(for: exercise) else { return nil }
 
-        let lowerWeightCount = pairs.filter { $0.current.weight < $0.previous.weight }.count
-        let higherWeightCount = pairs.filter { $0.current.weight > $0.previous.weight }.count
-        let sameWeightHigherReps = pairs.filter { $0.current.weight >= $0.previous.weight && $0.current.reps > $0.previous.reps }.count
-        let worseCount = pairs.filter { $0.current.weight < $0.previous.weight && $0.current.reps <= $0.previous.reps }.count
-        let avgVolumeDelta = pairs.reduce(0) { $0 + $1.volumeDelta } / Double(pairs.count)
-        let avgPreviousVolume = pairs.reduce(0) { $0 + $1.previous.volume } / Double(pairs.count)
-        let volumePercent = avgPreviousVolume > 0 ? (avgVolumeDelta / avgPreviousVolume) * 100 : 0
+        let previousSets = previous.sets.sorted { $0.setIndex < $1.setIndex }
+        let currentSets = current.sets.sorted { $0.setIndex < $1.setIndex }
+        let pairs = zip(previousSets, currentSets).map { SetPerformanceComparison(current: $1, previous: $0) }
+        guard !pairs.isEmpty, currentSets.count >= previousSets.count else { return nil }
 
+        // Progress is deliberately conservative: a lower load is never an increase,
+        // even if reps make volume rise.
+        let avgPreviousWeight = previousSets.reduce(0) { $0 + $1.weight } / Double(previousSets.count)
+        let avgCurrentWeight = currentSets.prefix(previousSets.count).reduce(0) { $0 + $1.weight } / Double(previousSets.count)
+        let weightPercent = avgPreviousWeight > 0 ? ((avgCurrentWeight - avgPreviousWeight) / avgPreviousWeight) * 100 : 0
+
+        let volumePercent: Double
+        if previous.totalVolume > 0 {
+            volumePercent = ((current.totalVolume - previous.totalVolume) / previous.totalVolume) * 100
+        } else {
+            volumePercent = 0
+        }
+
+        let lowerLoadSets = pairs.filter { $0.current.weight < $0.previous.weight }.count
+        let higherLoadSets = pairs.filter { $0.current.weight > $0.previous.weight }.count
+        let equalLoadMoreReps = pairs.filter { $0.current.weight == $0.previous.weight && $0.current.reps > $0.previous.reps }.count
+        let worseSets = pairs.filter {
+            $0.current.weight < $0.previous.weight ||
+            ($0.current.weight == $0.previous.weight && $0.current.reps < $0.previous.reps)
+        }.count
+
+        let half = max(1, Int(ceil(Double(pairs.count) / 2.0)))
         let status: PerformanceStatus
-        // A lower load is never classified as progress merely because another set gained volume.
-        if lowerWeightCount > higherWeightCount || worseCount >= max(1, pairs.count / 2 + 1) {
+        if lowerLoadSets >= half || weightPercent <= -2.0 || worseSets >= half {
             status = .decline
-        } else if volumePercent >= 3 || higherWeightCount > lowerWeightCount || sameWeightHigherReps >= max(1, pairs.count / 2) {
+        } else if (weightPercent >= 2.0 && volumePercent >= 3.0) ||
+                    (higherLoadSets >= half && volumePercent >= 0) ||
+                    (equalLoadMoreReps >= half && volumePercent >= 3.0) {
             status = .progress
-        } else if volumePercent <= -5 {
+        } else if volumePercent <= -5.0 || weightPercent <= -1.0 {
             status = .decline
         } else {
             status = .maintain
@@ -399,33 +430,76 @@ final class WorkoutStore: ObservableObject {
 
     func weeklyVolume(for target: MuscleTarget? = nil) -> Double {
         let start = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date())) ?? Date()
-        return exercises.filter { target == nil || $0.target == target }.reduce(0) { partial, exercise in
-            partial + sessions(for: exercise).filter { $0.date >= start }.reduce(0) { $0 + $1.totalVolume }
-        }
+        return sessionHistory
+            .filter { $0.date >= start }
+            .filter { session in
+                guard let exercise = exercises.first(where: { $0.id == session.exerciseID }) else { return false }
+                return target == nil || exercise.target == target
+            }
+            .reduce(0) { $0 + $1.totalVolume }
     }
 
-    private func buildSessions(for exercise: Exercise) -> [ExerciseSession] {
-        var grouped: [Date: [ExerciseSetSnapshot]] = [:]
+    private func updateTodaySession(forExerciseAt index: Int) {
+        guard exercises.indices.contains(index) else { return }
+        let exercise = exercises[index]
         let calendar = Calendar.current
-        for (index, set) in exercise.sets.enumerated() where set.completed {
-            let reps = Int(set.reps) ?? 0
-            guard reps > 0, set.weight > 0 else { continue }
-            let date = calendar.startOfDay(for: set.completedAt ?? Date())
-            let snapshot = ExerciseSetSnapshot(id: set.id, setIndex: index, weight: set.weight, reps: reps, date: set.completedAt ?? date, isBackOff: set.isBackOff)
-            grouped[date, default: []].append(snapshot)
+        let today = calendar.startOfDay(for: Date())
+        let completedSets = exercise.sets.enumerated().compactMap { item -> ExerciseSetSnapshot? in
+            let (setIndex, set) = item
+            guard set.completed, let completedAt = set.completedAt, let reps = Int(set.reps), reps > 0, set.weight > 0 else { return nil }
+            return ExerciseSetSnapshot(id: set.id, setIndex: setIndex, weight: set.weight, reps: reps, date: completedAt, isBackOff: set.isBackOff)
+        }.sorted { $0.setIndex < $1.setIndex }
+
+        sessionHistory.removeAll { $0.exerciseID == exercise.id && calendar.isDate($0.date, inSameDayAs: today) }
+        if !completedSets.isEmpty {
+            sessionHistory.append(ExerciseSession(id: UUID(), exerciseID: exercise.id, date: today, sets: completedSets))
         }
-        return grouped.map { date, sets in
-            ExerciseSession(id: UUID(uuidString: "\(exercise.id.uuidString.prefix(8))-\(date.timeIntervalSince1970.hashValue)".replacingOccurrences(of: "-", with: "")) ?? UUID(), exerciseID: exercise.id, date: date, sets: sets.sorted { $0.setIndex < $1.setIndex })
-        }.sorted { $0.date < $1.date }
+        saveSessionHistory()
+    }
+
+    private func loadSessionHistory() {
+        guard let data = UserDefaults.standard.data(forKey: sessionKey),
+              let decoded = try? JSONDecoder().decode([ExerciseSession].self, from: data) else { return }
+        sessionHistory = decoded
+    }
+
+    private func saveSessionHistory() {
+        guard let data = try? JSONEncoder().encode(sessionHistory) else { return }
+        UserDefaults.standard.set(data, forKey: sessionKey)
+    }
+
+    private func migrateCurrentCompletedSetsIntoHistoryIfNeeded() {
+        guard sessionHistory.isEmpty, !exercises.isEmpty else { return }
+        for index in exercises.indices {
+            if exercises[index].sets.contains(where: { $0.completed }) {
+                updateTodaySession(forExerciseAt: index)
+            }
+        }
     }
 
     func persistChanges() { persist() }
 
-    func backupData() -> Data? { try? JSONEncoder().encode(exercises) }
+    private struct BackupPayload: Codable {
+        let exercises: [Exercise]
+        let sessions: [ExerciseSession]
+    }
+
+    func backupData() -> Data? {
+        try? JSONEncoder().encode(BackupPayload(exercises: exercises, sessions: sessionHistory))
+    }
 
     func importBackup(data: Data) -> Bool {
+        if let payload = try? JSONDecoder().decode(BackupPayload.self, from: data) {
+            exercises = payload.exercises
+            sessionHistory = payload.sessions
+            persist()
+            return true
+        }
+        // Backward compatibility with old backups that contained only exercises.
         guard let decoded = try? JSONDecoder().decode([Exercise].self, from: data) else { return false }
         exercises = decoded
+        sessionHistory = []
+        migrateCurrentCompletedSetsIntoHistoryIfNeeded()
         persist()
         return true
     }
@@ -434,6 +508,7 @@ final class WorkoutStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(exercises) else { return }
         UserDefaults.standard.set(data, forKey: key)
         GymShared.defaults()?.set(data, forKey: key)
+        saveSessionHistory()
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif

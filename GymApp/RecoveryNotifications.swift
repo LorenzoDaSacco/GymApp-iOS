@@ -26,18 +26,23 @@ final class RecoveryNotifications {
 
         let id = notificationID(for: setID)
         let endDate = Date().addingTimeInterval(seconds)
-        let content = UNMutableNotificationContent()
-        content.title = "Recupero"
-        content.body = "\(exerciseName) · timer in corso"
-        content.sound = .default
-        content.interruptionLevel = .timeSensitive
-        content.relevanceScore = 1.0
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
         let center = UNUserNotificationCenter.current()
+
+        // The Live Activity is the visible countdown on the Lock Screen/Notification Center.
+        // Do not also create an end-of-timer alert when Live Activities are available: that
+        // old delivered alert would remain in Notification Center and occupy a slot.
         center.removePendingNotificationRequests(withIdentifiers: [id])
-        center.add(request)
+        removeOldDeliveredTimerNotifications(except: id)
+        if !ActivityAuthorizationInfo().areActivitiesEnabled {
+            let content = UNMutableNotificationContent()
+            content.title = "Recupero terminato"
+            content.body = exerciseName
+            content.sound = .default
+            content.interruptionLevel = .timeSensitive
+            content.relevanceScore = 1.0
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
+            center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
+        }
 
         saveEndDate(endDate, for: setID)
         startLiveActivity(setID: setID, exerciseName: exerciseName, recovery: recoveryText, endDate: endDate)
@@ -109,6 +114,14 @@ final class RecoveryNotifications {
         let id = setID.uuidString
         for activity in Activity<RecoveryActivityAttributes>.activities where activity.attributes.setID == id {
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
+    private func removeOldDeliveredTimerNotifications(except currentID: String) {
+        let ids = storedEndDates().keys.compactMap { UUID(uuidString: $0) }.map(notificationID)
+        let oldIDs = ids.filter { $0 != currentID }
+        if !oldIDs.isEmpty {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: oldIDs)
         }
     }
 

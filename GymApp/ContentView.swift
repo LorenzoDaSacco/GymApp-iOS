@@ -181,8 +181,9 @@ struct ExerciseCard: View {
     @State private var editing = false
     @State private var weightText: [UUID: String] = [:]
     @State private var repsText: [UUID: String] = [:]
+    @State private var targetText: [Int: String] = [:]
     @State private var showingDeleteConfirmation = false
-    @FocusState private var focused: UUID?
+    @FocusState private var focused: SetFieldFocus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -198,7 +199,10 @@ struct ExerciseCard: View {
                         .foregroundStyle(accentColor)
                 }
                 Spacer()
-                Button(editing ? "Fine" : "Modifica") { editing.toggle() }
+                Button(editing ? "Fine" : "Modifica") {
+                    if editing { commitTargetFields() }
+                    editing.toggle()
+                }
             }
 
             if editing && exercise.repScheme == .specific {
@@ -296,6 +300,14 @@ struct ExerciseCard: View {
             Button("Annulla", role: .cancel) {}
         } message: {
             Text("L'esercizio e tutte le sue serie verranno rimossi dalla scheda.")
+        }
+    }
+
+    private func commitTargetFields() {
+        guard exercise.repScheme == .specific else { return }
+        for index in exercise.sets.indices {
+            let value = targetText[index] ?? exercise.targetReps(for: index)
+            store.setTargetReps(value, exerciseID: exercise.id, setIndex: index)
         }
     }
 
@@ -448,11 +460,8 @@ struct SetRow: View {
             .keyboardType(.numberPad)
             .textFieldStyle(.roundedBorder)
             .frame(width: 68)
-            .focused($focused, equals: SetFieldFocus(setID: set.id, field: .reps))
+            .focused(focused, equals: SetFieldFocus(setID: set.id, field: .reps))
             .disabled(!editing)
-            .onChange(of: focused) { newFocus in
-                if newFocus != SetFieldFocus(setID: set.id, field: .reps) { commitReps() }
-            }
 
             if set.isBackOff {
                 HStack(spacing: 5) {
@@ -481,18 +490,15 @@ struct SetRow: View {
                 .keyboardType(.decimalPad)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 72)
-                .focused($focused, equals: SetFieldFocus(setID: set.id, field: .weight))
+                .focused(focused, equals: SetFieldFocus(setID: set.id, field: .weight))
                 .disabled(!editing)
                 .onSubmit { commitWeight() }
-                .onChange(of: focused) { newFocus in
-                    if newFocus != SetFieldFocus(setID: set.id, field: .weight) { commitWeight() }
-                }
             }
 
             Button {
                 commitReps()
                 commitWeight()
-                focused = nil
+                focused.wrappedValue = nil
                 store.toggle(exercise.id, setID: set.id)
             } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
@@ -506,7 +512,7 @@ struct SetRow: View {
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Fine") { focused = nil }
+                Button("Fine") { focused.wrappedValue = nil }
             }
         }
     }
@@ -768,14 +774,8 @@ struct ExerciseHistoryView: View {
                                 y: .value("Volume", item.volume)
                             )
                             .interpolationMethod(.linear)
-
-                            PointMark(
-                                x: .value("Data", item.date),
-                                y: .value("Volume", item.volume)
-                            )
-                            .symbolSize(38)
                         }
-                        .chartYScale(domain: .automatic(includesZero: true))
+                        .chartYScale(domain: .automatic(includesZero: false))
                         .chartYAxis {
                             AxisMarks(position: .leading) { value in
                                 AxisGridLine()
@@ -842,7 +842,7 @@ struct ExerciseHistoryView: View {
     }
 
     private var chartPoints: [SessionChartPoint] {
-        sessions.map { SessionChartPoint(id: $0.id, date: $0.date, volume: $0.totalVolume) }
+        sessions.suffix(12).map { SessionChartPoint(id: $0.id, date: $0.date, volume: $0.totalVolume) }
     }
 
     private func format(_ v: Double) -> String {
