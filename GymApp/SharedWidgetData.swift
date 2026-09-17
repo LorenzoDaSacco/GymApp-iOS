@@ -50,19 +50,34 @@ enum WidgetDataReader {
         return all
     }
 
-    static func currentWorkoutDay() -> String {
+    static func currentWorkoutDay() -> String? {
         let weekday = WidgetDay.today()
         guard let data = GymShared.defaults()?.data(forKey: "gymapp.settings.v2") ?? UserDefaults.standard.data(forKey: "gymapp.settings.v2"),
-              let settings = try? JSONDecoder().decode(SettingsPayload.self, from: data),
-              settings.scheduleMode == .trainingDays,
-              let map = (GymShared.defaults()?.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) ?? (UserDefaults.standard.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) else {
+              let settings = try? JSONDecoder().decode(SettingsPayload.self, from: data) else {
             return weekday
         }
-        return map.first(where: { $0.value == weekday })?.key ?? "GIORNO 1"
+
+        guard settings.scheduleMode == .trainingDays else {
+            return weekday
+        }
+
+        guard let map = (GymShared.defaults()?.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) ??
+                        (UserDefaults.standard.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) else {
+            return nil
+        }
+
+        // In modalità GIORNO 1, 2, 3... il numero è legato al giorno
+        // della settimana configurato dall'utente. Se oggi non è uno dei
+        // giorni di allenamento, non mostriamo per errore GIORNO 1.
+        return map.first(where: { $0.value == weekday })?.key
+    }
+
+    static func currentWorkoutDayLabel() -> String {
+        currentWorkoutDay() ?? "GIORNO LIBERO"
     }
 
     static func todayExercises() -> [WidgetExercise] {
-        let day = currentWorkoutDay()
+        guard let day = currentWorkoutDay() else { return [] }
         return allExercises()
             .filter { $0.day == day }
             .map { exercise in
