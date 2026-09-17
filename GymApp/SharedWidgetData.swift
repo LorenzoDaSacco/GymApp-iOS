@@ -49,7 +49,6 @@ enum WidgetDay {
 }
 
 enum WidgetDataReader {
-    private static let weekdayNames = WidgetDay.all
     private static let sequenceMapKey = "gymapp.sequenceMap.v1"
 
     private static func normalizedDay(_ value: String) -> String {
@@ -62,14 +61,20 @@ enum WidgetDataReader {
         WidgetDay.today(calendar: .autoupdatingCurrent, date: date)
     }
 
-    private static func readData(_ key: String) -> Data? {
-        if let data = GymShared.defaults()?.data(forKey: key) { return data }
-        return UserDefaults.standard.data(forKey: key)
+    private static func readSharedData(_ key: String) -> Data? {
+        GymShared.defaults()?.data(forKey: key)
+    }
+
+    private static func readAnyData(_ key: String) -> Data? {
+        readSharedData(key) ?? UserDefaults.standard.data(forKey: key)
     }
 
     private static func rawExercises() -> [Exercise] {
+        // Il widget usa il contenitore App Group come fonte primaria.
+        // Il fallback standard serve solo per compatibilità con vecchie versioni.
         for key in [GymShared.workoutsKey, GymShared.legacyKey] {
-            if let data = readData(key), let all = try? JSONDecoder().decode([Exercise].self, from: data) {
+            if let data = readAnyData(key),
+               let all = try? JSONDecoder().decode([Exercise].self, from: data) {
                 return all
             }
         }
@@ -80,14 +85,19 @@ enum WidgetDataReader {
         GymShared.readWidgetSnapshot()
     }
 
-    private static func sequenceMap() -> [String: String] {
-        if let map = GymShared.defaults()?.dictionary(forKey: sequenceMapKey) as? [String: String] { return map }
-        if let map = UserDefaults.standard.dictionary(forKey: sequenceMapKey) as? [String: String] { return map }
+    private static func sharedSequenceMap() -> [String: String] {
+        if let map = GymShared.defaults()?.dictionary(forKey: sequenceMapKey) as? [String: String] {
+            return map
+        }
+        if let map = UserDefaults.standard.dictionary(forKey: sequenceMapKey) as? [String: String] {
+            return map
+        }
         return [:]
     }
 
-    /// Una sola regola per tutti i widget:
-    /// data reale dell'iPhone -> giorno della settimana -> allenamento.
+    /// Determina l'allenamento di oggi esclusivamente dalla data reale dell'iPhone.
+    /// In modalità settimanale: giovedì -> GIOVEDÌ.
+    /// In modalità GIORNO 1,2,3: giovedì -> il GIORNO X associato a GIOVEDÌ.
     private static func workoutDay(at date: Date) -> String? {
         let weekday = currentWeekday(at: date)
         let snapshot = currentSnapshot()
@@ -97,11 +107,15 @@ enum WidgetDataReader {
             return weekday
         }
 
-        let map = snapshot?.sequenceToWeekday.isEmpty == false
-            ? snapshot!.sequenceToWeekday
-            : sequenceMap()
+        let map: [String: String]
+        if let snapshotMap = snapshot?.sequenceToWeekday, !snapshotMap.isEmpty {
+            map = snapshotMap
+        } else {
+            map = sharedSequenceMap()
+        }
+
         let normalizedWeekday = normalizedDay(weekday)
-        return map.first(where: { normalizedDay($0.value) == normalizedWeekday })?.key
+        return map.first { normalizedDay($0.value) == normalizedWeekday }?.key
     }
 
     static func allExercises() -> [Exercise] { rawExercises() }
@@ -114,34 +128,50 @@ enum WidgetDataReader {
         workoutDay(at: date) ?? "GIORNO LIBERO"
     }
 
+    /// Legge prima lo snapshot App Group, che contiene esattamente i dati che
+    /// l'app ha appena salvato per il widget. Solo dopo prova il vecchio JSON.
+    /// Questo evita che un decode parziale/vecchio del modello Exercise faccia
+    /// apparire 0/0 quando l'app contiene invece gli esercizi corretti.
     static func todayExercises(at date: Date = Date()) -> [WidgetExercise] {
         guard let targetDay = workoutDay(at: date) else { return [] }
         let normalizedTarget = normalizedDay(targetDay)
 
-        // Preferisce sempre il JSON condiviso dell'app: è la fonte autorevole
-        // e contiene lo stato aggiornato di completamento delle singole serie.
-        let raw = rawExercises()
-        if !raw.isEmpty {
-            return raw.compactMap { exercise in
-                guard normalizedDay(exercise.day) == normalizedTarget else { return nil }
-                return WidgetExercise(
-                    day: exercise.day,
-                    name: exercise.name,
-                    sets: exercise.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) },
-                    recovery: exercise.recovery
-                )
+        if let snapshot = currentSnapshot() {
+            let matching = snapshot.exercises.filter {
+                normalizedDay($0.day) == normalizedTarget
+            }
+            if !matching.isEmpty || !snapshot.exercises.isEmpty {
+                return matching
             }
         }
 
-        // Fallback per dati di versioni precedenti.
-        return (currentSnapshot()?.exercises ?? []).filter { normalizedDay($0.day) == normalizedTarget }
+        let raw = rawExercises()
+        guard !raw.isEmpty else { return [] }
+
+        return raw.compactMap { exercise in
+            guard normalizedDay(exercise.day) == normalizedTarget else { return nil }
+            return WidgetExercise(
+                day: exercise.day,
+                name: exercise.name,
+                sets: exercise.sets.map {
+                    WidgetWorkoutSet(
+                        reps: $0.reps,
+                        weight: $0.weight,
+                        completed: $0.completed
+                    )
+                },
+                recovery: exercise.recovery
+            )
+        }
     }
 
     static func todayProgress(at date: Date = Date()) -> (completedSets: Int, totalSets: Int, completedExercises: Int, totalExercises: Int) {
         let exercises = todayExercises(at: date)
         let totalSets = exercises.reduce(0) { $0 + $1.sets.count }
         let completedSets = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
-        let completedExercises = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
+        let completedExercises = exercises.filter {
+            !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed)
+        }.count
         return (completedSets, totalSets, completedExercises, exercises.count)
     }
 }
