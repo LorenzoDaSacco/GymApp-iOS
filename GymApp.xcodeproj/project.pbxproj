@@ -22,6 +22,7 @@
  A00000010000000000000020 /* Models.swift in Widgets */ = {isa = PBXBuildFile; fileRef = A00000100000000000000002; };
  A00000010000000000000021 /* SharedWidgetData.swift in Widgets */ = {isa = PBXBuildFile; fileRef = A00000100000000000000011; };
  A00000010000000000000022 /* GymWidgets.swift in Widgets */ = {isa = PBXBuildFile; fileRef = A00000100000000000000020; };
+ A00000010000000000000023 /* RecoveryLiveActivity.swift in Widgets */ = {isa = PBXBuildFile; fileRef = A00000100000000000000023; };
  A00000010000000000000030 /* GymWidgets.appex */ = {isa = PBXBuildFile; fileRef = A00000100000000000000030; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -47,6 +48,7 @@
  A00000100000000000000020 /* GymWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GymWidgets.swift; sourceTree = "<group>"; };
  A00000100000000000000021 /* GymWidgets Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
  A00000100000000000000022 /* GymWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GymWidgets.entitlements; sourceTree = "<group>"; };
+ A00000100000000000000023 /* RecoveryLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryLiveActivity.swift; sourceTree = "<group>"; };
  A00000100000000000000030 /* GymWidgets.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = GymWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
  A00000100000000000000009 /* GymApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GymApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -59,7 +61,7 @@
 /* Begin PBXGroup section */
  A00000300000000000000001 = {isa = PBXGroup; children = (A00000300000000000000002, A00000100000000000000013, A00000300000000000000004, A00000300000000000000003); sourceTree = "<group>"; };
  A00000300000000000000002 /* GymApp */ = {isa = PBXGroup; children = (A00000100000000000000001,A00000100000000000000002,A00000100000000000000003,A00000100000000000000004,A00000100000000000000005,A00000100000000000000006,A00000100000000000000007,A00000100000000000000008,A00000100000000000000010,A00000100000000000000011,A00000100000000000000012,A00000100000000000000014,A00000100000000000000015); path = GymApp; sourceTree = "<group>"; };
- A00000300000000000000004 /* GymWidgets */ = {isa = PBXGroup; children = (A00000100000000000000020,A00000100000000000000021,A00000100000000000000022); path = GymWidgets; sourceTree = "<group>"; };
+ A00000300000000000000004 /* GymWidgets */ = {isa = PBXGroup; children = (A00000100000000000000020,A00000100000000000000021,A00000100000000000000022,A00000100000000000000023); path = GymWidgets; sourceTree = "<group>"; };
  A00000300000000000000003 /* Products */ = {isa = PBXGroup; children = (A00000100000000000000009,A00000100000000000000030); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -79,7 +81,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
  A00000200000000000000002 /* App Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000010000000000000001,A00000010000000000000002,A00000010000000000000003,A00000010000000000000004,A00000010000000000000005,A00000010000000000000006,A00000010000000000000010,A00000010000000000000011,A00000010000000000000012,A00000010000000000000013); runOnlyForDeploymentPostprocessing = 0; };
- A00000200000000000000006 /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000010000000000000020,A00000010000000000000021,A00000010000000000000022,A00000010000000000000014); runOnlyForDeploymentPostprocessing = 0; };
+ A00000200000000000000006 /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000010000000000000020,A00000010000000000000021,A00000010000000000000022,A00000010000000000000014,A00000010000000000000023); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
