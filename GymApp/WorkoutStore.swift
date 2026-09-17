@@ -5,17 +5,8 @@ import WidgetKit
 #endif
 
 enum GymCalendar {
-    static func effectiveDate(at now: Date = Date()) -> Date {
-        guard let data = GymShared.defaults()?.data(forKey: GymShared.calendarReferenceKey) ?? UserDefaults.standard.data(forKey: GymShared.calendarReferenceKey),
-              let reference = try? JSONDecoder().decode(GymShared.CalendarReference.self, from: data) else {
-            return now
-        }
-        let calendar = Calendar.current
-        let realToday = calendar.startOfDay(for: now)
-        let referenceRealDay = calendar.startOfDay(for: reference.realStartDate)
-        let referenceDay = calendar.startOfDay(for: reference.referenceDate)
-        let offset = calendar.dateComponents([.day], from: referenceRealDay, to: realToday).day ?? 0
-        return calendar.date(byAdding: .day, value: offset, to: referenceDay) ?? reference.referenceDate
+    static func today(_ now: Date = Date()) -> Date {
+        Calendar.autoupdatingCurrent.startOfDay(for: now)
     }
 }
 
@@ -60,28 +51,19 @@ final class WorkoutStore: ObservableObject {
         refreshSelectedDayForToday()
     }
 
-    /// Data virtuale usata dall'app e dal widget. Normalmente coincide con oggi;
-    /// se l'utente corregge "Che giorno è?", da quel momento avanza di un giorno
-    /// automaticamente a ogni cambio di data reale.
+    /// Data reale dell'iPhone. Il giorno cambia automaticamente a mezzanotte
+    /// secondo il calendario e il fuso orario correnti.
     var currentCalendarDate: Date {
-        GymCalendar.effectiveDate(at: calendarClock)
+        calendarClock
     }
 
+    /// Mantiene compatibilità con i vecchi salvataggi. La data manuale non viene
+    /// più usata per spostare il giorno: il giorno corrente è sempre quello reale
+    /// dell'iPhone.
     func setCalendarDate(_ date: Date) {
-        let calendar = Calendar.current
-        let reference = GymShared.CalendarReference(
-            referenceDate: calendar.startOfDay(for: date),
-            realStartDate: calendar.startOfDay(for: Date())
-        )
-        if let data = try? JSONEncoder().encode(reference) {
-            UserDefaults.standard.set(data, forKey: calendarReferenceKey)
-            GymShared.defaults()?.set(data, forKey: calendarReferenceKey)
-        }
+        calendarClock = date
         refreshSelectedDayForToday(force: true)
-        writeWidgetSnapshot()
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadAllTimelines()
-        #endif
+        persist()
     }
 
     var dayExercises: [Exercise] { exercises.filter { $0.day == selectedDay } }
@@ -120,24 +102,24 @@ final class WorkoutStore: ObservableObject {
         persist()
     }
 
-    /// Allinea automaticamente la scheda al giorno reale dell'iPhone.
-    /// L'operazione automatica viene ripetuta solo quando cambia la data,
-    /// così una correzione manuale durante la stessa giornata non viene sovrascritta.
+    /// Allinea la scheda al giorno reale dell'iPhone. In modalità settimana
+    /// seleziona direttamente LUNEDÌ...DOMENICA; in modalità GIORNO 1,2,3...
+    /// usa esclusivamente l'associazione impostata nelle impostazioni.
     func refreshSelectedDayForToday(force: Bool = false) {
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let now = Date()
-        calendarClock = now
-        let effectiveDate = currentCalendarDate
         let startOfToday = calendar.startOfDay(for: now)
-        let markerKey = "gymapp.lastAutoDay.v2"
+        calendarClock = now
+
+        let markerKey = "gymapp.lastAutoDay.v3"
         let lastMarker = UserDefaults.standard.object(forKey: markerKey) as? Date
         if !force, let lastMarker, calendar.isDate(lastMarker, inSameDayAs: now) { return }
 
+        let weekday = weekdayName(for: now, calendar: calendar)
         let target: String?
         if scheduleMode == .weekdays {
-            target = weekdayName(for: effectiveDate, calendar: calendar)
+            target = weekday
         } else {
-            let weekday = weekdayName(for: effectiveDate, calendar: calendar)
             target = sequenceToWeekday.first(where: { $0.value == weekday })?.key
         }
 
@@ -421,11 +403,9 @@ final class WorkoutStore: ObservableObject {
     }
 
     private func writeWidgetSnapshot() {
-        let calendar = Calendar.current
-        let referenceData = GymShared.defaults()?.data(forKey: calendarReferenceKey) ?? UserDefaults.standard.data(forKey: calendarReferenceKey)
-        let reference = referenceData.flatMap { try? JSONDecoder().decode(GymShared.CalendarReference.self, from: $0) }
-        let realStart = reference?.realStartDate ?? calendar.startOfDay(for: Date())
-        let referenceDate = reference?.referenceDate ?? calendar.startOfDay(for: Date())
+        let now = Date()
+        let calendar = Calendar.autoupdatingCurrent
+        let today = calendar.startOfDay(for: now)
         let widgetExercises = exercises.map { exercise in
             WidgetExercise(
                 day: exercise.day,
@@ -435,8 +415,8 @@ final class WorkoutStore: ObservableObject {
             )
         }
         GymShared.writeWidgetSnapshot(
-            referenceDate: referenceDate,
-            realStartDate: realStart,
+            referenceDate: today,
+            realStartDate: today,
             scheduleMode: scheduleMode.rawValue,
             sequenceToWeekday: sequenceToWeekday,
             exercises: widgetExercises

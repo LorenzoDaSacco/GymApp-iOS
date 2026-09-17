@@ -927,17 +927,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Che giorno è?") {
-                DatePicker(
-                    "Data di oggi",
-                    selection: Binding(
-                        get: { store.currentCalendarDate },
-                        set: { store.setCalendarDate($0) }
-                    ),
-                    displayedComponents: [.date]
-                )
-                .datePickerStyle(.graphical)
-
+            Section("Giorno attuale") {
                 Text(store.currentCalendarDate.formatted(
                     Date.FormatStyle()
                         .weekday(.wide)
@@ -948,11 +938,7 @@ struct SettingsView: View {
                 .font(.subheadline.bold())
                 .foregroundStyle(accentColor)
 
-                Button("Imposta automaticamente la data dell'iPhone") {
-                    store.setCalendarDate(Date())
-                }
-
-                Text("Il calendario si aggiorna automaticamente allo scoccare delle 00:00. Se la data è sbagliata, seleziona manualmente quella corretta: da quel momento l'app avanzerà di un giorno a ogni nuova giornata.")
+                Text("Il giorno viene letto automaticamente dal calendario dell'iPhone e cambia alle 00:00. In modalità GIORNO 1, 2, 3... viene usata l'associazione che hai impostato sopra.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
