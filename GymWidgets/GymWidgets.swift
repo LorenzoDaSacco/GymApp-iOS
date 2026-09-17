@@ -17,12 +17,14 @@ struct GymDayProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymDayEntry>) -> Void) {
         let calendar = Calendar.autoupdatingCurrent
         let now = Date()
-        let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
-        let entries = [
-            GymDayEntry(date: now, day: WidgetDataReader.currentWorkoutDayLabel(at: now), exercises: WidgetDataReader.todayExercises(at: now)),
-            GymDayEntry(date: midnight, day: WidgetDataReader.currentWorkoutDayLabel(at: midnight), exercises: WidgetDataReader.todayExercises(at: midnight))
-        ]
-        completion(Timeline(entries: entries, policy: .after(midnight)))
+        let start = calendar.startOfDay(for: now)
+        var entries: [GymDayEntry] = []
+        entries.append(GymDayEntry(date: now, day: WidgetDataReader.currentWorkoutDayLabel(at: now), exercises: WidgetDataReader.todayExercises(at: now)))
+        for offset in 1...7 {
+            guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
+            entries.append(GymDayEntry(date: date, day: WidgetDataReader.currentWorkoutDayLabel(at: date), exercises: WidgetDataReader.todayExercises(at: date)))
+        }
+        completion(Timeline(entries: entries, policy: .atEnd))
     }
 }
 
@@ -46,14 +48,16 @@ struct GymProgressProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymProgressEntry>) -> Void) {
         let calendar = Calendar.autoupdatingCurrent
         let now = Date()
-        let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
+        let start = calendar.startOfDay(for: now)
+        var entries: [GymProgressEntry] = []
         let today = WidgetDataReader.todayProgress(at: now)
-        let tomorrow = WidgetDataReader.todayProgress(at: midnight)
-        let entries = [
-            GymProgressEntry(date: now, day: WidgetDataReader.currentWorkoutDayLabel(at: now), completedSets: today.completedSets, totalSets: today.totalSets, completedExercises: today.completedExercises, totalExercises: today.totalExercises),
-            GymProgressEntry(date: midnight, day: WidgetDataReader.currentWorkoutDayLabel(at: midnight), completedSets: tomorrow.completedSets, totalSets: tomorrow.totalSets, completedExercises: tomorrow.completedExercises, totalExercises: tomorrow.totalExercises)
-        ]
-        completion(Timeline(entries: entries, policy: .after(midnight)))
+        entries.append(GymProgressEntry(date: now, day: WidgetDataReader.currentWorkoutDayLabel(at: now), completedSets: today.completedSets, totalSets: today.totalSets, completedExercises: today.completedExercises, totalExercises: today.totalExercises))
+        for offset in 1...7 {
+            guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
+            let progress = WidgetDataReader.todayProgress(at: date)
+            entries.append(GymProgressEntry(date: date, day: WidgetDataReader.currentWorkoutDayLabel(at: date), completedSets: progress.completedSets, totalSets: progress.totalSets, completedExercises: progress.completedExercises, totalExercises: progress.totalExercises))
+        }
+        completion(Timeline(entries: entries, policy: .atEnd))
     }
 }
 
