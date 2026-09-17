@@ -213,31 +213,24 @@ enum WidgetDataReader {
     }
 
     static func todayProgress(at date: Date = Date()) -> (completedSets: Int, totalSets: Int, completedExercises: Int, totalExercises: Int) {
-        // I conteggi del widget derivano sempre dagli stessi esercizi che
-        // verrebbero mostrati per oggi. Non usiamo una voce dailyProgress
-        // eventualmente vecchia o rimasta a 0/0 come fonte primaria.
+        // Fonte primaria: il riepilogo che l'app ha calcolato per il giorno
+        // corrente. Evita qualsiasi ambiguita tra GIOVEDI e GIORNO X.
+        if let snapshot = currentSnapshot() {
+            let current = normalizedDay(currentWeekday(at: date))
+            if normalizedDay(snapshot.todayWeekday) == current {
+                let p = snapshot.todayProgress
+                if p.totalExercises > 0 || p.totalSets > 0 {
+                    return (p.completedSets, p.totalSets, p.completedExercises, p.totalExercises)
+                }
+            }
+        }
+
         let exercises = todayExercises(at: date)
         if !exercises.isEmpty {
             let totalSets = exercises.reduce(0) { $0 + $1.sets.count }
             let completedSets = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
             let completedExercises = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
             return (completedSets, totalSets, completedExercises, exercises.count)
-        }
-
-        // Solo se non esiste alcun esercizio per oggi usiamo i conteggi
-        // pre-calcolati come compatibilità con snapshot vecchi.
-        let targetDay = workoutDay(at: date)
-        let weekday = currentWeekday(at: date)
-        if let direct = currentSnapshot()?.dailyProgress {
-            if let targetDay,
-               let value = direct.first(where: { normalizedDay($0.key) == normalizedDay(targetDay) })?.value,
-               value.totalExercises > 0 {
-                return (value.completedSets, value.totalSets, value.completedExercises, value.totalExercises)
-            }
-            if let value = direct.first(where: { normalizedDay($0.key) == normalizedDay(weekday) })?.value,
-               value.totalExercises > 0 {
-                return (value.completedSets, value.totalSets, value.completedExercises, value.totalExercises)
-            }
         }
         return (0, 0, 0, 0)
     }

@@ -49,6 +49,7 @@ final class WorkoutStore: ObservableObject {
             persist()
         }
         refreshSelectedDayForToday()
+        persist()
     }
 
     /// Data reale dell'iPhone. Il giorno cambia automaticamente a mezzanotte
@@ -479,11 +480,33 @@ final class WorkoutStore: ObservableObject {
             }
         }
 
+        // Salva anche il riepilogo ESATTO di oggi. Il widget non deve ricostruire
+        // il giorno cercando tra chiavi potenzialmente vecchie.
+        let todayWeekday = weekdayName(for: now, calendar: calendar)
+        let todayWorkoutDay: String? = {
+            if scheduleMode == .weekdays { return todayWeekday }
+            return sequenceToWeekday.first {
+                normalizedWidgetDay($0.value) == normalizedWidgetDay(todayWeekday)
+            }?.key
+        }()
+        let todayExercises = exercises.filter {
+            normalizedWidgetDay($0.day) == normalizedWidgetDay(todayWorkoutDay ?? todayWeekday)
+        }
+        let todayProgress = GymWidgetDayProgress(
+            completedExercises: todayExercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count,
+            totalExercises: todayExercises.count,
+            completedSets: todayExercises.reduce(0) { $0 + $1.sets.filter(\.completed).count },
+            totalSets: todayExercises.reduce(0) { $0 + $1.sets.count }
+        )
+
         GymShared.writeWidgetSnapshot(
             referenceDate: today,
             realStartDate: today,
             scheduleMode: scheduleMode.rawValue,
             sequenceToWeekday: sequenceToWeekday,
+            todayWeekday: todayWeekday,
+            todayWorkoutDay: todayWorkoutDay,
+            todayProgress: todayProgress,
             exercises: widgetExercises,
             dailyProgress: dailyProgress
         )
