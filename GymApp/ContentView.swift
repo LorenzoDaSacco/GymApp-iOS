@@ -50,6 +50,7 @@ extension EnvironmentValues {
 
 struct ContentView: View {
     @EnvironmentObject private var store: WorkoutStore
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("gymapp.darkMode") private var darkMode = true
     @AppStorage("gymapp.accentColor") private var accentColorName = AccentColorOption.purple.rawValue
     @State private var selectedTab = 0
@@ -85,6 +86,9 @@ struct ContentView: View {
         .tint(accentColor)
         .environment(\.gymAccentColor, accentColor)
         .preferredColorScheme(darkMode ? .dark : .light)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { RecoveryNotifications.shared.cleanupExpired() }
+        }
     }
 }
 
@@ -96,13 +100,8 @@ struct DashboardView: View {
         ScrollView {
             VStack(spacing: 16) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("GYM TRACKER PRO")
-                            .font(.system(size: 26, weight: .black))
-                        Text("Allenamento di oggi")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("GYM TRACKER PRO")
+                        .font(.system(size: 26, weight: .black))
                     Spacer()
                     Image(systemName: "dumbbell.fill")
                         .font(.title3)
@@ -110,10 +109,7 @@ struct DashboardView: View {
                         .background(accentColor.opacity(0.15), in: .circle)
                 }
 
-                Picker("Giorno", selection: Binding(
-                    get: { store.selectedDisplayDay },
-                    set: { store.selectDisplayDay($0) }
-                )) {
+                Picker("Giorno", selection: $store.selectedDay) {
                     ForEach(store.days, id: \.self) { Text($0) }
                 }
                 .pickerStyle(.menu)
@@ -138,7 +134,7 @@ struct DashboardView: View {
             }
             .padding()
         }
-        .navigationTitle(store.selectedDisplayDay)
+        .navigationTitle(store.selectedDay)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reset") { store.resetDay() }
@@ -179,11 +175,7 @@ struct ExerciseCard: View {
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
     @State private var editing = false
-    @State private var weightText: [UUID: String] = [:]
-    @State private var repsText: [UUID: String] = [:]
-    @State private var targetText: [Int: String] = [:]
     @State private var showingDeleteConfirmation = false
-    @FocusState private var focused: SetFieldFocus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -192,64 +184,26 @@ struct ExerciseCard: View {
                     Text(exercise.name).font(.headline)
                     Text(exercise.group).font(.caption.bold()).foregroundStyle(accentColor)
                     Text(exercise.focus).font(.caption).foregroundStyle(.secondary)
-                    Text(exercise.repScheme == .general
-                         ? "Scheda: \(exercise.sets.count) × \(exercise.generalTargetReps)"
-                         : "Scheda: \(exercise.targetRepsBySet.map { $0.isEmpty ? exercise.generalTargetReps : $0 }.joined(separator: " · "))")
-                        .font(.caption2.bold())
-                        .foregroundStyle(accentColor)
-                }
-                Spacer()
-                Button(editing ? "Fine" : "Modifica") {
-                    if editing { commitTargetFields() }
-                    editing.toggle()
-                }
-            }
-
-            if editing && exercise.repScheme == .specific {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Ripetizioni previste per serie")
-                        .font(.caption.bold())
-                    ForEach(exercise.sets.indices, id: \.self) { index in
-                        HStack {
-                            Text("Serie \(index + 1)")
-                                .font(.caption)
-                            TextField("es. 8-10", text: Binding(
-                                get: { targetText[index] ?? exercise.targetReps(for: index) },
-                                set: { targetText[index] = $0 }
-                            ))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 95)
-                            .focused($focused, equals: SetFieldFocus(setID: exercise.sets[index].id, field: .target))
-                            .onChange(of: focused) { newFocus in
-                                if newFocus != SetFieldFocus(setID: exercise.sets[index].id, field: .target) {
-                                    let value = targetText[index] ?? exercise.targetReps(for: index)
-                                    store.setTargetReps(value, exerciseID: exercise.id, setIndex: index)
-                                }
-                            }
-                            Spacer()
-                        }
+                    if store.repetitionMode == .general {
+                        Text("Scheda: \(exercise.sets.count) × \(exercise.targetReps)")
+                            .font(.caption.bold()).foregroundStyle(accentColor)
+                    } else {
+                        Text("Scheda: \(exercise.sets.count) serie")
+                            .font(.caption.bold()).foregroundStyle(accentColor)
                     }
                 }
-                .padding(10)
-                .background(accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+                Spacer()
+                Button(editing ? "Fine" : "Modifica") { editing.toggle() }
             }
 
-            RecoveryTimerSection(
-                store: store,
-                exercise: exercise,
-                editing: editing,
-                accentColor: accentColor
-            )
+            RecoveryTimerSection(store: store, exercise: exercise, editing: editing, accentColor: accentColor)
 
             if editing {
-                Button(role: .destructive) {
-                    showingDeleteConfirmation = true
-                } label: {
+                Button(role: .destructive) { showingDeleteConfirmation = true } label: {
                     Label("Elimina esercizio", systemImage: "trash")
                         .font(.subheadline.bold())
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
                 Toggle(isOn: Binding(
                     get: { exercise.backOffEnabled },
                     set: { store.setBackOffEnabled($0, exerciseID: exercise.id) }
@@ -262,30 +216,25 @@ struct ExerciseCard: View {
                 .tint(accentColor)
             }
 
+            HStack(spacing: 10) {
+                Text("SERIE").frame(width: 34, alignment: .leading)
+                if store.repetitionMode == .perSet { Text("TARGET").frame(width: 58, alignment: .leading) }
+                Text("PESO").frame(width: 82, alignment: .leading)
+                Spacer()
+                Text("✓").frame(width: 32)
+            }
+            .font(.caption2.bold())
+            .foregroundStyle(.secondary)
+
             ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
-                SetRow(
-                    store: store,
-                    exercise: exercise,
-                    index: index,
-                    set: set,
-                    editing: editing,
-                    weightText: $weightText,
-                    repsText: $repsText,
-                    focused: $focused
-                )
+                SetRow(store: store, exercise: exercise, index: index, set: set, editing: editing)
             }
 
             HStack {
-                Button("+ Serie") {
-                    commitPendingFields()
-                    focused = nil
-                    store.addSet(to: exercise.id)
-                }.buttonStyle(.bordered)
+                Button("+ Serie") { store.addSet(to: exercise.id) }.buttonStyle(.bordered)
                 Button("− Serie") { store.removeSet(from: exercise.id) }.buttonStyle(.bordered)
                 Spacer()
-                Text("\(exercise.sets.count) serie")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("\(exercise.sets.count) serie").font(.caption).foregroundStyle(.secondary)
             }
 
             MuscleMapView(target: exercise.target)
@@ -302,30 +251,6 @@ struct ExerciseCard: View {
             Text("L'esercizio e tutte le sue serie verranno rimossi dalla scheda.")
         }
     }
-
-    private func commitTargetFields() {
-        guard exercise.repScheme == .specific else { return }
-        for index in exercise.sets.indices {
-            let value = targetText[index] ?? exercise.targetReps(for: index)
-            store.setTargetReps(value, exerciseID: exercise.id, setIndex: index)
-        }
-    }
-
-    private func commitPendingFields() {
-        // Commit any text still held locally before + Serie is executed.
-        // This prevents the focused first-set weight from being lost when a new set is added.
-        for currentSet in exercise.sets where !currentSet.isBackOff {
-            guard let raw = weightText[currentSet.id] else { continue }
-            let normalized = raw.replacingOccurrences(of: ",", with: ".")
-            guard let value = Double(normalized) else { continue }
-            store.updateWeight(value, exerciseID: exercise.id, setID: currentSet.id)
-        }
-
-        for currentSet in exercise.sets {
-            guard let value = repsText[currentSet.id], value != currentSet.reps else { continue }
-            store.setReps(value, exerciseID: exercise.id, setID: currentSet.id)
-        }
-    }
 }
 
 struct RecoveryTimerSection: View {
@@ -333,30 +258,22 @@ struct RecoveryTimerSection: View {
     let exercise: Exercise
     let editing: Bool
     let accentColor: Color
-    @State private var recoveryText: String = ""
+    @State private var recoveryText = ""
     @FocusState private var recoveryFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 10) {
-                Text("Recupero")
-                    .font(.caption.bold())
-
+                Text("Recupero").font(.caption.bold())
                 TextField("2:00", text: $recoveryText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
                     .focused($recoveryFocused)
                     .disabled(!editing)
                     .onAppear { recoveryText = exercise.recovery }
-                    .onChange(of: recoveryFocused) { isFocused in
-                        if !isFocused { commitRecovery() }
-                    }
-                    .onChange(of: exercise.recovery) { newValue in
-                        if !recoveryFocused { recoveryText = newValue }
-                    }
-
+                    .onChange(of: recoveryFocused) { _, isFocused in if !isFocused { commitRecovery() } }
+                    .onChange(of: exercise.recovery) { _, newValue in if !recoveryFocused { recoveryText = newValue } }
                 Spacer()
-
                 Text(exercise.target.title)
                     .font(.caption2)
                     .padding(7)
@@ -364,11 +281,7 @@ struct RecoveryTimerSection: View {
             }
 
             if let setID = activeTimerSetID {
-                RecoveryCountdownView(
-                    setID: setID,
-                    duration: RecoveryNotifications.seconds(from: exercise.recovery) ?? 120,
-                    accentColor: accentColor
-                )
+                RecoveryCountdownView(setID: setID, duration: RecoveryNotifications.seconds(from: exercise.recovery) ?? 120, accentColor: accentColor)
             }
         }
     }
@@ -377,18 +290,14 @@ struct RecoveryTimerSection: View {
         let value = recoveryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value != exercise.recovery else { return }
         store.setRecovery(value, exerciseID: exercise.id)
-        store.persistChanges()
     }
 
     private var activeTimerSetID: UUID? {
         let now = Date()
-        return exercise.sets
-            .filter { $0.completed }
-            .compactMap { set -> (UUID, Date)? in
-                guard let endDate = RecoveryNotifications.shared.endDate(for: set.id), endDate > now else { return nil }
-                return (set.id, endDate)
-            }
-            .max(by: { $0.1 < $1.1 })?.0
+        return exercise.sets.compactMap { set -> (UUID, Date)? in
+            guard let endDate = RecoveryNotifications.shared.endDate(for: set.id), endDate > now else { return nil }
+            return (set.id, endDate)
+        }.max(by: { $0.1 < $1.1 })?.0
     }
 }
 
@@ -402,7 +311,6 @@ struct RecoveryCountdownView: View {
             let endDate = RecoveryNotifications.shared.endDate(for: setID)
             let remaining = max(0, (endDate ?? context.date).timeIntervalSince(context.date))
             let progress = duration > 0 ? min(1, max(0, remaining / duration)) : 0
-
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(remaining > 0 ? formattedTime(remaining) : "PRONTO")
@@ -410,16 +318,11 @@ struct RecoveryCountdownView: View {
                         .foregroundStyle(remaining > 0 ? .primary : accentColor)
                     Spacer()
                     Text(remaining > 0 ? "Tempo restante" : "Puoi ripartire")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
-
-                ProgressView(value: progress, total: 1)
-                    .tint(accentColor)
-                    .scaleEffect(x: 1, y: 1.35, anchor: .center)
+                ProgressView(value: progress, total: 1).tint(accentColor)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 12).padding(.vertical, 9)
             .background(accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
         }
     }
@@ -430,12 +333,6 @@ struct RecoveryCountdownView: View {
     }
 }
 
-struct SetFieldFocus: Hashable {
-    let setID: UUID
-    let field: Field
-    enum Field: Hashable { case reps, weight, target }
-}
-
 struct SetRow: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
@@ -443,109 +340,96 @@ struct SetRow: View {
     let index: Int
     let set: WorkoutSet
     let editing: Bool
-    @Binding var weightText: [UUID: String]
-    @Binding var repsText: [UUID: String]
-    var focused: FocusState<SetFieldFocus?>.Binding
+    @State private var weightDraft = ""
+    @State private var repsDraft = ""
+    @FocusState private var focus: Field?
+
+    private enum Field: Hashable { case weight, reps }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("S\(index + 1)")
-                .font(.caption.bold())
-                .frame(width: 28)
+        HStack(spacing: 10) {
+            Text("S\(index + 1)").font(.caption.bold()).frame(width: 34, alignment: .leading)
 
-            TextField(exercise.targetReps(for: index), text: Binding(
-                get: { repsText[set.id] ?? set.reps },
-                set: { repsText[set.id] = String($0.filter(\.isNumber).prefix(3)) }
-            ))
-            .keyboardType(.numberPad)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 68)
-            .focused(focused, equals: SetFieldFocus(setID: set.id, field: .reps))
-            .disabled(!editing)
-
-            if set.isBackOff {
-                HStack(spacing: 5) {
-                    Text(format(store.backOffWeight(exerciseID: exercise.id)))
-                        .font(.body.bold())
-                    Text("kg")
-                        .font(.caption.bold())
-                    Text("−20%")
-                        .font(.caption2.bold())
-                }
-                .foregroundStyle(accentColor)
-                .padding(.vertical, 9)
-                .padding(.horizontal, 8)
-                .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-            } else {
-                TextField("kg", text: Binding(
-                    get: { weightText[set.id] ?? format(set.weight) },
-                    set: { newValue in
-                        if newValue.isEmpty {
-                            weightText[set.id] = format(set.weight)
-                        } else {
-                            weightText[set.id] = newValue
-                        }
-                    }
-                ))
-                .keyboardType(.decimalPad)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 72)
-                .focused(focused, equals: SetFieldFocus(setID: set.id, field: .weight))
-                .disabled(!editing)
-                .onSubmit { commitWeight() }
+            if store.repetitionMode == .perSet {
+                Text(set.prescribedReps ?? exercise.targetReps)
+                    .font(.caption.bold())
+                    .frame(width: 58, alignment: .leading)
             }
 
-            Button {
-                commitReps()
-                commitWeight()
-                focused.wrappedValue = nil
-                store.toggle(exercise.id, setID: set.id)
-            } label: {
+            if set.isBackOff {
+                Text(format(store.backOffWeight(exerciseID: exercise.id)))
+                    .font(.body.bold())
+                    .frame(width: 82, alignment: .leading)
+            } else {
+                TextField("kg", text: $weightDraft)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 82)
+                    .focused($focus, equals: .weight)
+                    .disabled(!editing)
+                    .onAppear { syncDrafts() }
+                    .onChange(of: set.weight) { _, _ in if focus != .weight { syncWeight() } }
+                    .onChange(of: focus) { _, newFocus in if newFocus != .weight { commitWeight() } }
+            }
+
+            if store.repetitionMode == .perSet {
+                TextField("reps", text: $repsDraft)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 64)
+                    .focused($focus, equals: .reps)
+                    .disabled(!editing)
+                    .onAppear { syncDrafts() }
+                    .onChange(of: focus) { _, newFocus in if newFocus != .reps { commitReps() } }
+            }
+
+            Spacer()
+            Button { commitBeforeToggle(); store.toggle(exercise.id, setID: set.id); focus = nil } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
             }
             .buttonStyle(.plain)
-            .disabled(!canComplete)
-
-            Spacer(minLength: 0)
+            .frame(width: 32)
         }
+        .onAppear { syncDrafts() }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Fine") { focused.wrappedValue = nil }
+                Button("Fine") { focus = nil }
             }
         }
     }
 
-    private var canComplete: Bool {
-        let repsValue = Int(repsText[set.id] ?? set.reps) ?? 0
-        let rawWeight = weightText[set.id] ?? format(set.weight)
-        let weightValue = Double(rawWeight.replacingOccurrences(of: ",", with: ".")) ?? set.weight
-        return repsValue > 0 && weightValue > 0
+    private func syncDrafts() {
+        if weightDraft.isEmpty { weightDraft = format(set.weight) }
+        if repsDraft.isEmpty { repsDraft = set.reps }
     }
 
-    private func format(_ value: Double) -> String {
-        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
-    }
+    private func syncWeight() { weightDraft = format(set.weight) }
 
-    private func commitReps() {
-        let value = repsText[set.id] ?? set.reps
-        let filtered = String(value.filter(\.isNumber).prefix(3))
-        guard filtered != set.reps else { return }
-        store.setReps(filtered, exerciseID: exercise.id, setID: set.id)
+    private func commitBeforeToggle() {
+        commitWeight(); commitReps()
     }
 
     private func commitWeight() {
         guard !set.isBackOff else { return }
-        let raw = weightText[set.id] ?? format(set.weight)
-        let normalized = raw.replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized), value >= 0 else {
-            weightText[set.id] = format(set.weight)
+        let raw = weightDraft.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Double(raw), value > 0 else {
+            weightDraft = format(set.weight)
             return
         }
         store.updateWeight(value, exerciseID: exercise.id, setID: set.id)
-        // Keep the edited value isolated to this set; never rewrite the other rows.
-        weightText[set.id] = format(value)
+        weightDraft = format(value)
+    }
+
+    private func commitReps() {
+        guard store.repetitionMode == .perSet else { return }
+        let value = repsDraft.filter(\.isNumber).prefix(3).description
+        if value != set.reps { store.setReps(value, exerciseID: exercise.id, setID: set.id) }
+    }
+
+    private func format(_ v: Double) -> String {
+        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
     }
 }
 
@@ -557,7 +441,7 @@ struct AnalyticsView: View {
     @State private var selectedDay: String?
 
     private var activeDays: [String] {
-        store.days.filter { !store.exercises(forDisplayDay: $0).isEmpty }
+        store.days.filter { day in store.exercises.contains { $0.day == day } }
     }
 
     var body: some View {
@@ -600,7 +484,7 @@ struct DayProgressCard: View {
     let day: String
     let action: () -> Void
 
-    private var exercises: [Exercise] { store.exercises(forDisplayDay: day) }
+    private var exercises: [Exercise] { store.exercises.filter { $0.day == day } }
     private var totalSets: Int { exercises.reduce(0) { $0 + $1.sets.count } }
     private var muscles: String {
         Array(Set(exercises.map { $0.target.title })).prefix(3).joined(separator: " • ")
@@ -670,7 +554,7 @@ struct DayProgressView: View {
     @ObservedObject var store: WorkoutStore
     let day: String
 
-    private var exercises: [Exercise] { store.exercises(forDisplayDay: day) }
+    private var exercises: [Exercise] { store.exercises.filter { $0.day == day } }
 
     var body: some View {
         List {
@@ -720,19 +604,12 @@ struct DayProgressView: View {
     }
 }
 
-struct SessionChartPoint: Identifiable {
-    let id: UUID
-    let date: Date
-    let volume: Double
-}
-
 struct ExerciseHistoryView: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let exercise: Exercise
 
     private var history: [WeightLog] { store.history(for: exercise) }
-    private var sessions: [ExerciseSession] { store.sessions(for: exercise) }
     private var currentWeight: Double { store.maxWeight(for: exercise) }
 
     var body: some View {
@@ -747,81 +624,45 @@ struct ExerciseHistoryView: View {
 
                 HStack(spacing: 12) {
                     DetailMetric(title: "Massimo", value: "\(format(currentWeight)) kg")
-                    DetailMetric(title: "Sessioni", value: "\(sessions.count)")
-                    DetailMetric(title: "Volume", value: formatVolume(store.totalVolume(for: exercise)))
-                }
-
-                if let comparison = store.performance(for: exercise) {
-                    PerformanceDetailCard(comparison: comparison, accentColor: accentColor)
+                    DetailMetric(title: "Aggiornamenti", value: "\(history.count)")
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Volume per sessione").font(.headline)
-                        Spacer()
-                        Text("kg × reps").font(.caption2).foregroundStyle(.secondary)
-                    }
+                    Text("Andamento peso").font(.headline)
+                    Text(history.isEmpty ? "Il punto mostra il peso attuale. I prossimi cambiamenti creeranno lo storico." : "Ogni nuovo peso confermato aggiunge un punto al grafico.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                    if sessions.isEmpty {
-                        Text("Completa almeno una serie per iniziare lo storico.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, minHeight: 150)
-                    } else {
-                        Chart(chartPoints) { item in
-                            LineMark(
-                                x: .value("Data", item.date),
-                                y: .value("Volume", item.volume)
-                            )
-                            .interpolationMethod(.linear)
-                        }
-                        .chartYScale(domain: .automatic(includesZero: false))
-                        .chartYAxis {
-                            AxisMarks(position: .leading) { value in
-                                AxisGridLine()
-                                AxisValueLabel {
-                                    if let number = value.as(Double.self) {
-                                        Text(formatVolume(number))
-                                    }
-                                }
-                            }
-                        }
-                        .chartXAxis {
-                            AxisMarks(values: .automatic(desiredCount: min(5, max(2, chartPoints.count)))) { value in
-                                AxisGridLine(stroke: StrokeStyle(lineWidth: 0))
-                                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
-                            }
-                        }
-                        .frame(height: 230)
+                    Chart(chartPoints) { item in
+                        LineMark(
+                            x: .value("Data", item.date),
+                            y: .value("Kg", item.weight)
+                        )
+                        .interpolationMethod(.catmullRom)
+                        .foregroundStyle(accentColor)
+
+                        PointMark(
+                            x: .value("Data", item.date),
+                            y: .value("Kg", item.weight)
+                        )
+                        .foregroundStyle(accentColor)
                     }
+                    .chartYScale(domain: 0...300)
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: [0, 50, 100, 150, 200, 250, 300]) { value in
+                            AxisGridLine()
+                            AxisTick()
+                            AxisValueLabel { Text("\(value.as(Int.self) ?? 0) kg") }
+                        }
+                    }
+                    .frame(height: 300)
                 }
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
 
-                if !sessions.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Sessioni recenti").font(.headline)
-                        ForEach(sessions.reversed()) { session in
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text(session.date.formatted(date: .abbreviated, time: .omitted)).font(.subheadline.bold())
-                                    Spacer()
-                                    Text(formatVolume(session.totalVolume)).font(.subheadline.bold()).foregroundStyle(accentColor)
-                                }
-                                Text(session.sets.map { "S\($0.setIndex + 1) \(format($0.weight))kg × \($0.reps)" }.joined(separator: "   "))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Divider()
-                        }
-                    }
-                    .padding()
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
-                }
-
                 if !history.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Storico modifiche peso").font(.headline)
+                        Text("Storico").font(.headline)
                         ForEach(history.reversed()) { log in
                             HStack {
                                 Text(log.date.formatted(date: .abbreviated, time: .shortened))
@@ -841,54 +682,14 @@ struct ExerciseHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var chartPoints: [SessionChartPoint] {
-        sessions.suffix(12).map { SessionChartPoint(id: $0.id, date: $0.date, volume: $0.totalVolume) }
+    private var chartPoints: [WeightLog] {
+        if !history.isEmpty { return history }
+        guard currentWeight > 0 else { return [] }
+        return [WeightLog(date: Date(), weight: currentWeight)]
     }
 
     private func format(_ v: Double) -> String {
         String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
-    }
-
-    private func formatVolume(_ v: Double) -> String {
-        if v >= 1000 { return String(format: "%.1fk", v / 1000).replacingOccurrences(of: ".0", with: "") }
-        return String(format: "%.0f", v)
-    }
-}
-
-struct PerformanceDetailCard: View {
-    let comparison: PerformanceComparison
-    let accentColor: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(comparison.status.title).font(.headline.bold())
-                Spacer()
-                Text(comparison.volumeDeltaPercent >= 0 ? "+\(String(format: "%.1f", comparison.volumeDeltaPercent))%" : "\(String(format: "%.1f", comparison.volumeDeltaPercent))%")
-                    .font(.caption.bold())
-            }
-            Text("Confronto con la sessione precedente: vengono confrontati peso e ripetizioni della stessa serie.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(comparison.sets, id: \.current.id) { pair in
-                HStack {
-                    Text("S\(pair.current.setIndex + 1)")
-                    Spacer()
-                    Text("\(format(pair.previous.weight)) × \(pair.previous.reps)")
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "arrow.right")
-                        .font(.caption)
-                    Text("\(format(pair.current.weight)) × \(pair.current.reps)").bold()
-                }
-                .font(.caption)
-            }
-        }
-        .padding()
-        .background(accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 22))
-    }
-
-    private func format(_ value: Double) -> String {
-        String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "")
     }
 }
 
@@ -916,11 +717,10 @@ struct AddExerciseView: View {
     let onAdded: () -> Void
     @State private var name = ""
     @State private var reps = "8-10"
-    @State private var specificReps: [String] = ["8-10", "8-10", "8-10"]
-    @State private var repScheme: RepScheme = .general
     @State private var sets = 3
     @State private var recovery = "2:00"
     @State private var weights: [String] = ["20", "20", "20"]
+    @State private var perSetReps: [String] = ["8", "8", "8"]
     @State private var backOffEnabled = false
     @State private var selectedMuscle: MuscleTarget = .fullBody
     @FocusState private var field: Bool
@@ -933,52 +733,42 @@ struct AddExerciseView: View {
     var body: some View {
         Form {
             Section("Giorno") {
-                Picker("Giorno", selection: Binding(
-                    get: { store.selectedDisplayDay },
-                    set: { store.selectDisplayDay($0) }
-                )) {
+                Picker("Giorno", selection: $store.selectedDay) {
                     ForEach(store.days, id: \.self) { Text($0) }
                 }
             }
             Section("Esercizio") {
                 TextField("Nome", text: $name).focused($field)
-                Picker("Schema ripetizioni", selection: $repScheme) {
-                    ForEach(RepScheme.allCases, id: \.self) { scheme in
-                        Text(scheme.title).tag(scheme)
-                    }
-                }
-                if repScheme == .general {
-                    TextField("Ripetizioni", text: $reps)
+                if store.repetitionMode == .general {
+                    TextField("Ripetizioni generali (es. 8-10)", text: $reps)
                 } else {
+                    Text("Ripetizioni per serie").font(.caption.bold())
                     ForEach(0..<sets, id: \.self) { i in
-                        TextField("Serie \(i + 1) · reps", text: Binding(
-                            get: { specificReps.indices.contains(i) ? specificReps[i] : reps },
-                            set: {
-                                if specificReps.count <= i { specificReps += Array(repeating: reps, count: i - specificReps.count + 1) }
-                                specificReps[i] = $0
-                            }
-                        ))
+                        HStack {
+                            Text("Serie \(i + 1)")
+                            Spacer()
+                            TextField("8", text: Binding(
+                                get: { perSetReps.indices.contains(i) ? perSetReps[i] : "8" },
+                                set: { if perSetReps.indices.contains(i) { perSetReps[i] = $0.filter(\.isNumber) } }
+                            ))
+                            .keyboardType(.numberPad)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
                     }
                 }
                 Stepper("Serie normali: \(sets)", value: $sets, in: 1...20)
-                    .onChange(of: sets) { newValue in
-                        if weights.count < newValue { weights += Array(repeating: "20", count: newValue - weights.count) } else { weights = Array(weights.prefix(newValue)) }
-                        if specificReps.count < newValue { specificReps += Array(repeating: reps, count: newValue - specificReps.count) } else { specificReps = Array(specificReps.prefix(newValue)) }
+                    .onChange(of: sets) { _, newValue in
+                        if weights.count < newValue { weights += Array(repeating: "20", count: newValue - weights.count) }
+                        else { weights = Array(weights.prefix(newValue)) }
+                        if perSetReps.count < newValue { perSetReps += Array(repeating: reps.isEmpty ? "8" : reps.filter(\.isNumber), count: newValue - perSetReps.count) }
+                        else { perSetReps = Array(perSetReps.prefix(newValue)) }
                     }
-                Toggle("Aggiungi back-off −20%", isOn: $backOffEnabled)
-                    .tint(accentColor)
+                Toggle("Aggiungi back-off −20%", isOn: $backOffEnabled).tint(accentColor)
                 if needsMuscleSelection {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Esercizio non presente nel registro")
-                            .font(.caption.bold())
-                        Picker("Muscolo principale", selection: $selectedMuscle) {
-                            ForEach(MuscleTarget.allCases, id: \.self) { muscle in
-                                Text(muscle.title).tag(muscle)
-                            }
-                        }
-                        Text("Scegli il muscolo principale per completare la mappa muscolare e i progressi.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        Text("Esercizio non presente nel registro").font(.caption.bold())
+                        Picker("Muscolo principale", selection: $selectedMuscle) { ForEach(MuscleTarget.allCases, id: \.self) { Text($0.title).tag($0) } }
                     }
                 }
                 TextField("Recupero (es. 2:00)", text: $recovery)
@@ -987,50 +777,25 @@ struct AddExerciseView: View {
                 ForEach(0..<weights.count, id: \.self) { i in
                     TextField("Serie \(i + 1)", text: $weights[i]).keyboardType(.decimalPad)
                 }
-                if backOffEnabled {
-                    let previous = Double(weights.last?.replacingOccurrences(of: ",", with: ".") ?? "") ?? 0
-                    HStack {
-                        Text("Back-off — ultima serie")
-                        Spacer()
-                        Text("\(formatWeight(previous * 0.8)) kg")
-                            .foregroundStyle(accentColor)
-                            .font(.body.bold())
-                    }
-                    Text("Il peso del back-off è automatico e non modificabile: 20% in meno rispetto all'ultima serie normale.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
             Button("Aggiungi alla scheda") {
                 let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmedName.isEmpty else { return }
-                let ws = weights.map { Double($0.replacingOccurrences(of: ",", with: ".")) ?? 0 }
-                store.addExercise(day: store.selectedDay, name: trimmedName, reps: reps, weights: ws, recovery: recovery, backOffEnabled: backOffEnabled, manualTarget: needsMuscleSelection ? selectedMuscle : nil, repScheme: repScheme, targetRepsBySet: repScheme == .specific ? specificReps : nil)
-                field = false
-                onAdded()
-                name = ""
-                reps = "8-10"
-                specificReps = ["8-10", "8-10", "8-10"]
-                repScheme = store.repSchemePreference
-                sets = 3
-                recovery = "2:00"
-                weights = ["20", "20", "20"]
-                backOffEnabled = false
-                selectedMuscle = .fullBody
+                let ws = weights.map { Double($0.replacingOccurrences(of: ",", with: ".")) ?? 20 }
+                let prs = perSetReps.map { $0.isEmpty ? "8" : $0 }
+                store.addExercise(day: store.selectedDay, name: trimmedName, reps: reps, weights: ws, recovery: recovery,
+                                  backOffEnabled: backOffEnabled, manualTarget: needsMuscleSelection ? selectedMuscle : nil,
+                                  perSetReps: store.repetitionMode == .perSet ? prs : nil)
+                field = false; onAdded()
+                name = ""; reps = "8-10"; sets = 3; recovery = "2:00"
+                weights = ["20", "20", "20"]; perSetReps = ["8", "8", "8"]
+                backOffEnabled = false; selectedMuscle = .fullBody
             }
         }
         .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Fine") { field = false }
-            }
+            ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Fine") { field = false } }
         }
         .navigationTitle("Aggiungi esercizio")
-        .onAppear { repScheme = store.repSchemePreference }
-    }
-
-    private func formatWeight(_ v: Double) -> String {
-        String(format: "%.1f", v).replacingOccurrences(of: ".0", with: "")
     }
 }
 
@@ -1046,76 +811,52 @@ struct SettingsView: View {
         Form {
             Section("Aspetto") {
                 Toggle("Tema scuro", isOn: $darkMode)
-
                 Picker("Colore principale", selection: $accentColorName) {
                     ForEach(AccentColorOption.allCases) { option in
-                        HStack {
-                            Circle().fill(option.color).frame(width: 12, height: 12)
-                            Text(option.title)
-                        }
-                        .tag(option.rawValue)
+                        HStack { Circle().fill(option.color).frame(width: 12, height: 12); Text(option.title) }.tag(option.rawValue)
                     }
-                }
-
-                HStack {
-                    Text("Tema attuale")
-                    Spacer()
-                    Text(darkMode ? "Scuro" : "Chiaro").foregroundStyle(.secondary)
                 }
             }
 
-            Section("Organizzazione scheda") {
-                Picker("Calendario allenamenti", selection: Binding(
+            Section("Organizzazione allenamenti") {
+                Picker("Calendario", selection: Binding(
                     get: { store.scheduleMode },
-                    set: { store.scheduleMode = $0 }
+                    set: { store.setScheduleMode($0) }
                 )) {
-                    ForEach(ScheduleMode.allCases, id: \.self) { mode in
-                        Text(mode.title).tag(mode)
-                    }
+                    ForEach(ScheduleMode.allCases) { Text($0.title).tag($0) }
                 }
-
-                Text(store.scheduleMode == .weekdays
-                     ? "L'allenamento viene mostrato come LUNEDÌ, MARTEDÌ, MERCOLEDÌ…"
-                     : "L'allenamento viene mostrato come GIORNO 1, GIORNO 2, GIORNO 3… e non dipende dal giorno della settimana.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if store.scheduleMode == .trainingDays {
+                    Stepper("Giorni della scheda: \(store.trainingDayCount)", value: Binding(
+                        get: { store.trainingDayCount },
+                        set: { store.setTrainingDayCount($0) }
+                    ), in: 1...7)
+                    Text("Vengono mostrati solo GIORNO 1…GIORNO \(store.trainingDayCount). I giorni vuoti non vengono aggiunti automaticamente.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Sono disponibili i 7 giorni della settimana. I giorni senza esercizi restano semplicemente vuoti.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Section("Ripetizioni") {
-                Picker("Schema", selection: Binding(
-                    get: { store.repSchemePreference },
-                    set: { store.applyRepSchemeToAll($0) }
+                Picker("Prescrizione", selection: Binding(
+                    get: { store.repetitionMode },
+                    set: { store.setRepetitionMode($0) }
                 )) {
-                    ForEach(RepScheme.allCases, id: \.self) { scheme in
-                        Text(scheme.title).tag(scheme)
-                    }
+                    ForEach(RepetitionMode.allCases) { Text($0.title).tag($0) }
                 }
-
-                if store.repSchemePreference == .general {
-                    Text("Una prescrizione unica per tutte le serie, ad esempio 4 × 8-10.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if store.repetitionMode == .general {
+                    Text("Esempio: 3 × 8-10. Nell'esercizio vengono mostrati solo i pesi delle singole serie.")
+                        .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("Ogni serie può avere la propria prescrizione, ad esempio 10 · 8 · 8 · 6.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Esempio: S1 10 · S2 8 · S3 8. Ogni serie può avere una prescrizione diversa.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
             Section("Dati") {
                 Text("I dati vengono salvati localmente sul telefono.")
                 Button("Richiedi notifiche") { RecoveryNotifications.shared.requestPermission() }
-            }
-
-            Section("Scheda") {
-                ForEach(store.days, id: \.self) { day in
-                    HStack {
-                        Text(day)
-                        Spacer()
-                        Text("\(store.exercises(forDisplayDay: day).count) esercizi")
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
         }
         .navigationTitle("Impostazioni")

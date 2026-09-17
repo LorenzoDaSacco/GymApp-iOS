@@ -1,5 +1,4 @@
 import Foundation
-
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -8,9 +7,6 @@ enum GymShared {
     static let appGroup = "group.com.gymtrackerpro.shared"
     static let workoutsKey = "gymapp.native.v5"
     static let legacyKey = "gymapp.native.v4"
-    static let selectedDayKey = "gymapp.selectedDay"
-    static let scheduleModeKey = "gymapp.scheduleMode"
-
     static func defaults() -> UserDefaults? { UserDefaults(suiteName: appGroup) }
 }
 
@@ -27,64 +23,62 @@ struct WidgetExercise: Codable {
 }
 
 enum WidgetDay {
-    static let weekdays = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
-    static let numbered = (1...7).map { "GIORNO \($0)" }
-
+    static let all = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
     static func today(calendar: Calendar = .current, date: Date = Date()) -> String {
-        let rawMode = GymShared.defaults()?.string(forKey: GymShared.scheduleModeKey) ?? "weekdays"
-        let mode = ScheduleMode(rawValue: rawMode) ?? .weekdays
-        if mode == .numbered {
-            return selectedDayDisplay()
+        switch calendar.component(.weekday, from: date) {
+        case 2: return all[0]
+        case 3: return all[1]
+        case 4: return all[2]
+        case 5: return all[3]
+        case 6: return all[4]
+        case 7: return all[5]
+        default: return all[6]
         }
-        let n = calendar.component(.weekday, from: date)
-        switch n {
-        case 2: return weekdays[0]
-        case 3: return weekdays[1]
-        case 4: return weekdays[2]
-        case 5: return weekdays[3]
-        case 6: return weekdays[4]
-        case 7: return weekdays[5]
-        default: return weekdays[6]
-        }
-    }
-
-    static func canonicalDay(for display: String) -> String {
-        if let index = numbered.firstIndex(of: display) { return weekdays[index] }
-        return display
-    }
-
-    private static func selectedDayDisplay() -> String {
-        let raw = GymShared.defaults()?.string(forKey: GymShared.selectedDayKey) ?? weekdays[0]
-        if let index = weekdays.firstIndex(of: raw) { return numbered[index] }
-        if numbered.contains(raw) { return raw }
-        return numbered[0]
     }
 }
 
 enum WidgetDataReader {
-    static func todayExercises() -> [WidgetExercise] {
+    private struct SettingsPayload: Codable {
+        let scheduleMode: ScheduleMode
+        let repetitionMode: RepetitionMode
+        let trainingDayCount: Int
+    }
+
+    static func allExercises() -> [Exercise] {
         guard let data = GymShared.defaults()?.data(forKey: GymShared.workoutsKey),
               let all = try? JSONDecoder().decode([Exercise].self, from: data) else { return [] }
-        let day = WidgetDay.canonicalDay(for: WidgetDay.today())
-        return all.filter { $0.day == day }.map {
-            WidgetExercise(
-                name: $0.name,
-                sets: $0.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) },
-                recovery: $0.recovery
-            )
+        return all
+    }
+
+    static func currentWorkoutDay() -> String {
+        let weekday = WidgetDay.today()
+        guard let data = GymShared.defaults()?.data(forKey: "gymapp.settings.v2") ?? UserDefaults.standard.data(forKey: "gymapp.settings.v2"),
+              let settings = try? JSONDecoder().decode(SettingsPayload.self, from: data),
+              settings.scheduleMode == .trainingDays,
+              let map = (GymShared.defaults()?.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) ?? (UserDefaults.standard.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) else {
+            return weekday
         }
+        return map.first(where: { $0.value == weekday })?.key ?? "GIORNO 1"
     }
 
-    static func completedSetsCount() -> (completed: Int, total: Int) {
-        let exercises = todayExercises()
-        let total = exercises.reduce(0) { $0 + $1.sets.count }
-        let completed = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
-        return (completed, total)
+    static func todayExercises() -> [WidgetExercise] {
+        let day = currentWorkoutDay()
+        return allExercises()
+            .filter { $0.day == day }
+            .map { exercise in
+                WidgetExercise(
+                    name: exercise.name,
+                    sets: exercise.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) },
+                    recovery: exercise.recovery
+                )
+            }
     }
 
-    static func completedExercisesCount() -> (completed: Int, total: Int) {
+    static func todayProgress() -> (completedSets: Int, totalSets: Int, completedExercises: Int, totalExercises: Int) {
         let exercises = todayExercises()
-        let completed = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
-        return (completed, exercises.count)
+        let totalSets = exercises.reduce(0) { $0 + $1.sets.count }
+        let completedSets = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
+        let completedExercises = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
+        return (completedSets, totalSets, completedExercises, exercises.count)
     }
 }

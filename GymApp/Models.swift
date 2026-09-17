@@ -16,26 +16,26 @@ enum MuscleTarget: String, Codable, CaseIterable {
     }
 }
 
-enum RepScheme: String, Codable, CaseIterable {
-    case general
-    case specific
-
+enum ScheduleMode: String, Codable, CaseIterable, Identifiable {
+    case weekdays
+    case trainingDays
+    var id: String { rawValue }
     var title: String {
         switch self {
-        case .general: return "Ripetizioni generali"
-        case .specific: return "Ripetizioni per serie"
+        case .weekdays: return "Giorni della settimana"
+        case .trainingDays: return "Giorno 1, 2, 3…"
         }
     }
 }
 
-enum ScheduleMode: String, Codable, CaseIterable {
-    case weekdays
-    case numbered
-
+enum RepetitionMode: String, Codable, CaseIterable, Identifiable {
+    case general
+    case perSet
+    var id: String { rawValue }
     var title: String {
         switch self {
-        case .weekdays: return "Giorni della settimana"
-        case .numbered: return "Giorno 1, 2, 3…"
+        case .general: return "Ripetizioni generali"
+        case .perSet: return "Ripetizioni per serie"
         }
     }
 }
@@ -45,30 +45,25 @@ struct WeightLog: Codable, Equatable, Identifiable {
     let date: Date
     let weight: Double
     init(id: UUID = UUID(), date: Date = Date(), weight: Double) {
-        self.id = id
-        self.date = date
-        self.weight = weight
+        self.id = id; self.date = date; self.weight = weight
     }
 }
 
 struct WorkoutSet: Codable, Equatable, Identifiable {
     let id: UUID
+    /// Ripetizioni effettivamente eseguite. La prescrizione è in prescribedReps.
     var reps: String
     var weight: Double
     var completed: Bool
     var completedAt: Date?
     var history: [WeightLog]
     var isBackOff: Bool
+    /// Prescrizione della singola serie quando è attiva la modalità per-serie.
+    var prescribedReps: String?
 
-    init(
-        id: UUID = UUID(),
-        reps: String,
-        weight: Double = 20,
-        completed: Bool = false,
-        completedAt: Date? = nil,
-        history: [WeightLog] = [],
-        isBackOff: Bool = false
-    ) {
+    init(id: UUID = UUID(), reps: String = "", weight: Double = 20, completed: Bool = false,
+         completedAt: Date? = nil, history: [WeightLog] = [], isBackOff: Bool = false,
+         prescribedReps: String? = nil) {
         self.id = id
         self.reps = reps
         self.weight = weight
@@ -76,21 +71,39 @@ struct WorkoutSet: Codable, Equatable, Identifiable {
         self.completedAt = completedAt
         self.history = history
         self.isBackOff = isBackOff
+        self.prescribedReps = prescribedReps
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, reps, weight, completed, completedAt, history, isBackOff
+        case id, reps, weight, completed, completedAt, history, isBackOff, prescribedReps
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        reps = try c.decode(String.self, forKey: .reps)
+        let rawReps = try c.decodeIfPresent(String.self, forKey: .reps) ?? ""
         weight = try c.decodeIfPresent(Double.self, forKey: .weight) ?? 20
         completed = try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
         history = try c.decodeIfPresent([WeightLog].self, forKey: .history) ?? []
         isBackOff = try c.decodeIfPresent(Bool.self, forKey: .isBackOff) ?? false
+        prescribedReps = try c.decodeIfPresent(String.self, forKey: .prescribedReps)
+
+        // Migrazione dai dati precedenti: il vecchio campo reps conteneva anche
+        // la prescrizione (es. 8-10 / 10 RM). Se non è numerico la conserviamo
+        // come prescrizione e lasciamo vuote le ripetizioni effettive.
+        if prescribedReps == nil, WorkoutSet.looksLikePrescription(rawReps) {
+            reps = ""
+            prescribedReps = rawReps
+        } else {
+            reps = rawReps == "0" ? "" : rawReps
+        }
+    }
+
+    private static func looksLikePrescription(_ value: String) -> Bool {
+        let s = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if s.contains("RM") || s.contains("-") || s.contains("×") || s.contains("X") { return true }
+        return s.isEmpty == false && Int(s) == nil
     }
 }
 
@@ -102,52 +115,25 @@ struct Exercise: Identifiable, Codable, Equatable {
     var focus: String
     var target: MuscleTarget
     var sets: [WorkoutSet]
+    var targetReps: String
     var notes: String
     var recovery: String
     var backOffEnabled: Bool
-    var repScheme: RepScheme
-    var targetRepsBySet: [String]
 
-    init(
-        id: UUID = UUID(),
-        day: String,
-        name: String,
-        group: String,
-        focus: String,
-        target: MuscleTarget,
-        reps: String,
-        numberOfSets: Int,
-        notes: String = "",
-        recovery: String = "",
-        backOffEnabled: Bool = false,
-        repScheme: RepScheme = .general,
-        targetRepsBySet: [String]? = nil
-    ) {
-        self.id = id
-        self.day = day
-        self.name = name
-        self.group = group
-        self.focus = focus
-        self.target = target
-        self.sets = (0..<max(1, numberOfSets)).map { _ in WorkoutSet(reps: "", weight: 20) }
-        self.notes = notes
-        self.recovery = recovery
-        self.backOffEnabled = backOffEnabled
-        self.repScheme = repScheme
-        self.targetRepsBySet = targetRepsBySet ?? Array(repeating: reps, count: max(1, numberOfSets))
-    }
-
-    var generalTargetReps: String {
-        targetRepsBySet.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? "8-10"
-    }
-
-    func targetReps(for index: Int) -> String {
-        guard repScheme == .specific, targetRepsBySet.indices.contains(index) else { return generalTargetReps }
-        return targetRepsBySet[index].isEmpty ? generalTargetReps : targetRepsBySet[index]
+    init(id: UUID = UUID(), day: String, name: String, group: String, focus: String,
+         target: MuscleTarget, reps: String, numberOfSets: Int, notes: String = "",
+         recovery: String = "", backOffEnabled: Bool = false, perSetReps: [String]? = nil) {
+        self.id = id; self.day = day; self.name = name; self.group = group
+        self.focus = focus; self.target = target
+        self.targetReps = reps
+        self.sets = (0..<max(1, numberOfSets)).map { index in
+            WorkoutSet(reps: "", prescribedReps: perSetReps?[safe: index] ?? nil)
+        }
+        self.notes = notes; self.recovery = recovery; self.backOffEnabled = backOffEnabled
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, day, name, group, focus, target, sets, notes, recovery, backOffEnabled, repScheme, targetRepsBySet
+        case id, day, name, group, focus, target, sets, targetReps, notes, recovery, backOffEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -159,36 +145,17 @@ struct Exercise: Identifiable, Codable, Equatable {
         focus = try c.decode(String.self, forKey: .focus)
         target = try c.decode(MuscleTarget.self, forKey: .target)
         sets = try c.decode([WorkoutSet].self, forKey: .sets)
+        let decodedTarget = try c.decodeIfPresent(String.self, forKey: .targetReps)
+        let fallback = sets.compactMap { $0.prescribedReps }.first ?? "8-10"
+        targetReps = decodedTarget ?? fallback
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         recovery = try c.decodeIfPresent(String.self, forKey: .recovery) ?? ""
         backOffEnabled = try c.decodeIfPresent(Bool.self, forKey: .backOffEnabled) ?? false
+    }
+}
 
-        let oldGeneral = sets.first?.reps.isEmpty == false ? sets.first!.reps : "8-10"
-        repScheme = try c.decodeIfPresent(RepScheme.self, forKey: .repScheme) ?? .general
-        targetRepsBySet = try c.decodeIfPresent([String].self, forKey: .targetRepsBySet) ?? Array(repeating: oldGeneral, count: max(1, sets.count))
-        if targetRepsBySet.count < sets.count {
-            targetRepsBySet += Array(repeating: oldGeneral, count: sets.count - targetRepsBySet.count)
-        } else if targetRepsBySet.count > sets.count {
-            targetRepsBySet = Array(targetRepsBySet.prefix(sets.count))
-        }
-
-        // Legacy data stored the prescription inside WorkoutSet.reps.
-        // Convert obvious prescription strings to empty actual-reps fields while preserving numeric actual reps.
-        let looksLikePrescription: (String) -> Bool = { value in
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            return trimmed.contains("RM") || trimmed.contains("-") || trimmed.contains("×") || trimmed.contains("X")
-        }
-        if c.contains(.repScheme) == false {
-            let legacyTarget = sets.first?.reps.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let legacyTarget, !legacyTarget.isEmpty, looksLikePrescription(legacyTarget) {
-                targetRepsBySet = Array(repeating: legacyTarget, count: max(1, sets.count))
-                repScheme = .general
-                sets = sets.map { old in
-                    var value = old
-                    if looksLikePrescription(old.reps) { value.reps = "" }
-                    return value
-                }
-            }
-        }
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

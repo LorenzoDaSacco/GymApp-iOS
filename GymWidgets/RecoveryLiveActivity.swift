@@ -7,51 +7,35 @@ struct RecoveryLiveActivity: Widget {
         ActivityConfiguration(for: RecoveryActivityAttributes.self) { context in
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label("Recupero", systemImage: "timer")
-                        .font(.headline.bold())
+                    Label("Recupero", systemImage: "timer").font(.headline.bold())
                     Spacer()
-                    Text(timerInterval: Date()...context.attributes.endDate, countsDown: true)
+                    Text(timerInterval: Date()...context.state.endDate, countsDown: true)
                         .font(.system(.headline, design: .monospaced).bold())
+                        .monospacedDigit()
                 }
-
-                Text(context.attributes.exerciseName)
-                    .font(.caption)
-                    .lineLimit(1)
-
-                ProgressView(timerInterval: Date()...context.attributes.endDate, countsDown: true)
+                Text(context.state.exerciseName).font(.caption).lineLimit(1)
+                ProgressView(timerInterval: Date()...context.state.endDate, countsDown: true)
                     .tint(.accentColor)
-
-                Text("Puoi ripartire quando il timer arriva a 0:00")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
             .padding()
-            .activityBackgroundTint(.black.opacity(0.9))
+            .activityBackgroundTint(.black.opacity(0.92))
             .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    Label("Recupero", systemImage: "timer")
-                        .font(.headline)
-                }
+                DynamicIslandExpandedRegion(.leading) { Image(systemName: "timer") }
+                DynamicIslandExpandedRegion(.center) { Text("RECUPERO").font(.caption.bold()) }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(timerInterval: Date()...context.attributes.endDate, countsDown: true)
-                        .font(.system(.title3, design: .monospaced).bold())
+                    Text(timerInterval: Date()...context.state.endDate, countsDown: true)
+                        .font(.system(.caption, design: .monospaced).bold()).monospacedDigit()
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(context.attributes.exerciseName)
-                            .font(.caption)
-                            .lineLimit(1)
-                        ProgressView(timerInterval: Date()...context.attributes.endDate, countsDown: true)
-                            .tint(.accentColor)
-                    }
+                    ProgressView(timerInterval: Date()...context.state.endDate, countsDown: true).tint(.accentColor)
                 }
             } compactLeading: {
                 Image(systemName: "timer")
             } compactTrailing: {
-                Text(timerInterval: Date()...context.attributes.endDate, countsDown: true)
-                    .font(.system(.caption, design: .monospaced).bold())
+                Text(timerInterval: Date()...context.state.endDate, countsDown: true)
+                    .font(.system(size: 12, design: .monospaced).bold()).monospacedDigit()
             } minimal: {
                 Image(systemName: "timer")
             }
