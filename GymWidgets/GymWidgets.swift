@@ -92,6 +92,55 @@ struct ProgressWidgetView: View {
     }
 }
 
+struct CombinedProgressWidgetView: View {
+    let entry: GymProgressEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("PROGRESSO OGGI")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Image(systemName: "figure.strengthtraining.traditional")
+                    Text("Esercizi")
+                        .font(.headline.bold())
+                    Spacer()
+                    Text("\(entry.completedExercises)/\(entry.totalExercises)")
+                        .font(.system(size: 22, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                }
+
+                HStack {
+                    Image(systemName: "square.stack.3d.up.fill")
+                    Text("Serie")
+                        .font(.headline.bold())
+                    Spacer()
+                    Text("\(entry.completedSets)/\(entry.totalSets)")
+                        .font(.system(size: 22, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                }
+            }
+        }
+        .padding()
+        .containerBackground(for: .widget) { Color(.systemBackground) }
+    }
+}
+
+struct CombinedProgressWidget: Widget {
+    let kind = "CombinedProgressWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: GymProgressProvider()) { entry in
+            CombinedProgressWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Esercizi e serie")
+        .description("Mostra esercizi e serie completati oggi, ad esempio 1/8 e 10/30.")
+        .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
 enum ProgressWidgetMode { case sets, exercises }
 
 struct SchedaOggiWidget: Widget {
@@ -128,6 +177,7 @@ struct EserciziProgressWidget: Widget {
 struct GymWidgetsBundle: WidgetBundle {
     var body: some Widget {
         SchedaOggiWidget()
+        CombinedProgressWidget()
         SerieProgressWidget()
         EserciziProgressWidget()
         RecoveryLiveActivity()
