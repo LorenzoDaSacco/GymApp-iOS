@@ -87,7 +87,10 @@ struct ContentView: View {
         .environment(\.gymAccentColor, accentColor)
         .preferredColorScheme(darkMode ? .dark : .light)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { RecoveryNotifications.shared.cleanupExpired() }
+            if phase == .active {
+                RecoveryNotifications.shared.cleanupExpired()
+                store.syncCurrentDaySelection()
+            }
         }
     }
 }
@@ -780,6 +783,11 @@ struct AddExerciseView: View {
                 Picker("Giorno", selection: $store.selectedDay) {
                     ForEach(store.days, id: \.self) { Text($0) }
                 }
+                if store.scheduleMode == .trainingDays && store.trainingDayCount < 7 {
+                    Button { store.addTrainingDay() } label: {
+                        Label("Aggiungi nuovo giorno", systemImage: "plus.circle.fill")
+                    }
+                }
             }
             Section("Esercizio") {
                 TextField("Nome", text: $name).focused($field)
@@ -874,8 +882,18 @@ struct SettingsView: View {
                         get: { store.trainingDayCount },
                         set: { store.setTrainingDayCount($0) }
                     ), in: 1...7)
-                    Text("Vengono mostrati solo GIORNO 1…GIORNO \(store.trainingDayCount). I giorni vuoti non vengono aggiunti automaticamente.")
+                    Text("Associa ogni GIORNO a un giorno della settimana. L'app usa automaticamente il calendario dell'iPhone e cambia giorno allo scoccare della mezzanotte.")
                         .font(.caption).foregroundStyle(.secondary)
+                    ForEach(store.days, id: \.self) { trainingDay in
+                        Picker(trainingDay, selection: Binding(
+                            get: { store.weekdayForTrainingDay(trainingDay) },
+                            set: { store.setTrainingDayWeekday(trainingDay, weekday: $0) }
+                        )) {
+                            ForEach(store.weekdayNamesForSettings, id: \.self) { weekday in
+                                Text(weekday).tag(weekday)
+                            }
+                        }
+                    }
                 } else {
                     Text("Sono disponibili i 7 giorni della settimana. I giorni senza esercizi restano semplicemente vuoti.")
                         .font(.caption).foregroundStyle(.secondary)

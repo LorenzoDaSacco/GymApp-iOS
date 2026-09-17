@@ -17,13 +17,14 @@ struct GymDayProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymDayEntry>) -> Void) {
         let now = Date()
         let entry = GymDayEntry(date: now, day: WidgetDataReader.currentWorkoutDayLabel(), exercises: WidgetDataReader.todayExercises())
-        completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(900))))
+        let calendar = Calendar.current
+        let nextMidnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
+        completion(Timeline(entries: [entry], policy: .after(nextMidnight)))
     }
 }
 
 struct GymProgressEntry: TimelineEntry {
     let date: Date
-    let day: String
     let completedSets: Int
     let totalSets: Int
     let completedExercises: Int
@@ -32,16 +33,19 @@ struct GymProgressEntry: TimelineEntry {
 
 struct GymProgressProvider: TimelineProvider {
     func placeholder(in context: Context) -> GymProgressEntry {
-        GymProgressEntry(date: Date(), day: WidgetDataReader.currentWorkoutDayLabel(), completedSets: 10, totalSets: 25, completedExercises: 1, totalExercises: 8)
+        GymProgressEntry(date: Date(), completedSets: 10, totalSets: 25, completedExercises: 1, totalExercises: 8)
     }
     func getSnapshot(in context: Context, completion: @escaping (GymProgressEntry) -> Void) {
         let p = WidgetDataReader.todayProgress()
-        completion(GymProgressEntry(date: Date(), day: WidgetDataReader.currentWorkoutDayLabel(), completedSets: p.completedSets, totalSets: p.totalSets, completedExercises: p.completedExercises, totalExercises: p.totalExercises))
+        completion(GymProgressEntry(date: Date(), completedSets: p.completedSets, totalSets: p.totalSets, completedExercises: p.completedExercises, totalExercises: p.totalExercises))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymProgressEntry>) -> Void) {
+        let now = Date()
         let p = WidgetDataReader.todayProgress()
-        let entry = GymProgressEntry(date: Date(), day: WidgetDataReader.currentWorkoutDayLabel(), completedSets: p.completedSets, totalSets: p.totalSets, completedExercises: p.completedExercises, totalExercises: p.totalExercises)
-        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(900))))
+        let entry = GymProgressEntry(date: now, completedSets: p.completedSets, totalSets: p.totalSets, completedExercises: p.completedExercises, totalExercises: p.totalExercises)
+        let calendar = Calendar.current
+        let nextMidnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
+        completion(Timeline(entries: [entry], policy: .after(nextMidnight)))
     }
 }
 
@@ -93,93 +97,6 @@ struct ProgressWidgetView: View {
     }
 }
 
-struct CombinedProgressWidgetView: View {
-    let entry: GymProgressEntry
-    @Environment(\.widgetFamily) private var family
-
-    var body: some View {
-        if family == .systemSmall {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(entry.day)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Text("OGGI")
-                    .font(.caption.bold())
-
-                HStack(spacing: 7) {
-                    Image(systemName: "figure.strengthtraining.traditional")
-                        .font(.caption)
-                    Text("Esercizi")
-                        .font(.caption.bold())
-                    Spacer(minLength: 2)
-                    Text("\(entry.completedExercises)/\(entry.totalExercises)")
-                        .font(.title3.bold())
-                        .monospacedDigit()
-                }
-
-                HStack(spacing: 7) {
-                    Image(systemName: "square.stack.3d.up.fill")
-                        .font(.caption)
-                    Text("Serie")
-                        .font(.caption.bold())
-                    Spacer(minLength: 2)
-                    Text("\(entry.completedSets)/\(entry.totalSets)")
-                        .font(.title3.bold())
-                        .monospacedDigit()
-                }
-            }
-            .padding()
-            .containerBackground(for: .widget) { Color(.systemBackground) }
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(entry.day)
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("OGGI")
-                        .font(.caption2.bold())
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Image(systemName: "figure.strengthtraining.traditional")
-                    Text("Esercizi").font(.headline.bold())
-                    Spacer()
-                    Text("\(entry.completedExercises)/\(entry.totalExercises)")
-                        .font(.system(size: 22, weight: .black, design: .rounded))
-                        .monospacedDigit()
-                }
-
-                HStack {
-                    Image(systemName: "square.stack.3d.up.fill")
-                    Text("Serie").font(.headline.bold())
-                    Spacer()
-                    Text("\(entry.completedSets)/\(entry.totalSets)")
-                        .font(.system(size: 22, weight: .black, design: .rounded))
-                        .monospacedDigit()
-                }
-            }
-            .padding()
-            .containerBackground(for: .widget) { Color(.systemBackground) }
-        }
-    }
-}
-struct CombinedProgressWidget: Widget {
-    let kind = "CombinedProgressWidget"
-
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: GymProgressProvider()) { entry in
-            CombinedProgressWidgetView(entry: entry)
-        }
-        .configurationDisplayName("Esercizi e serie")
-        .description("Mostra esercizi e serie completati oggi, ad esempio 1/8 e 10/30.")
-        .supportedFamilies([.systemSmall, .systemMedium])
-    }
-}
-
 enum ProgressWidgetMode { case sets, exercises }
 
 struct SchedaOggiWidget: Widget {
@@ -216,7 +133,6 @@ struct EserciziProgressWidget: Widget {
 struct GymWidgetsBundle: WidgetBundle {
     var body: some Widget {
         SchedaOggiWidget()
-        CombinedProgressWidget()
         SerieProgressWidget()
         EserciziProgressWidget()
         RecoveryLiveActivity()

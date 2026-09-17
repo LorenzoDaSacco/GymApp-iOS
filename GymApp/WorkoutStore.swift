@@ -40,6 +40,7 @@ final class WorkoutStore: ObservableObject {
             normalizeScheduleAfterLoad()
             persist()
         }
+        syncCurrentDaySelection()
     }
 
     var dayExercises: [Exercise] { exercises.filter { $0.day == selectedDay } }
@@ -61,21 +62,60 @@ final class WorkoutStore: ObservableObject {
         if scheduleMode == .trainingDays {
             let oldCount = trainingDayCount
             trainingDayCount = newCount
-            if newCount < oldCount {
-                // Non cancelliamo esercizi: se un giorno viene ridotto, lo riportiamo
-                // al giorno precedente disponibile invece di perderlo.
+            if newCount > oldCount {
+                for number in (oldCount + 1)...newCount {
+                    let key = "GIORNO \(number)"
+                    if sequenceToWeekday[key] == nil {
+                        let used = Set(sequenceToWeekday.values)
+                        sequenceToWeekday[key] = weekdayNames.first(where: { !used.contains($0) }) ?? weekdayNames[number - 1]
+                    }
+                }
+                selectedDay = "GIORNO \(newCount)"
+            } else if newCount < oldCount {
                 for i in exercises.indices {
                     if let n = sequenceNumber(exercises[i].day), n > newCount {
                         exercises[i].day = "GIORNO \(newCount)"
                     }
                 }
+                sequenceToWeekday = sequenceToWeekday.filter { (key, _) in
+                    guard let n = sequenceNumber(key) else { return false }
+                    return n <= newCount
+                }
+                if !days.contains(selectedDay) { selectedDay = days.last ?? "GIORNO 1" }
             }
-            if !days.contains(selectedDay) { selectedDay = days.last ?? "GIORNO 1" }
         } else {
             trainingDayCount = newCount
         }
         saveSettings(); persist()
     }
+
+    func addTrainingDay() {
+        guard scheduleMode == .trainingDays, trainingDayCount < 7 else { return }
+        setTrainingDayCount(trainingDayCount + 1)
+    }
+
+    func setTrainingDayWeekday(_ trainingDay: String, weekday: String) {
+        guard scheduleMode == .trainingDays, days.contains(trainingDay), weekdayNames.contains(weekday) else { return }
+        sequenceToWeekday[trainingDay] = weekday
+        saveSettings()
+        persist()
+        syncCurrentDaySelection()
+    }
+
+    func syncCurrentDaySelection() {
+        let today = WidgetDay.today()
+        if scheduleMode == .weekdays {
+            if weekdayNames.contains(today) { selectedDay = today }
+        } else if let trainingDay = sequenceToWeekday.first(where: { $0.value == today })?.key, days.contains(trainingDay) {
+            selectedDay = trainingDay
+        }
+    }
+
+    func weekdayForTrainingDay(_ trainingDay: String) -> String {
+        sequenceToWeekday[trainingDay] ?? weekdayNames.first ?? "LUNEDÌ"
+    }
+
+    var weekdayNamesForSettings: [String] { weekdayNames }
 
     func setRepetitionMode(_ mode: RepetitionMode) {
         guard mode != repetitionMode else { return }
@@ -377,6 +417,13 @@ final class WorkoutStore: ObservableObject {
                     if let n = active.firstIndex(of: exercises[i].day) { exercises[i].day = "GIORNO \(n + 1)" }
                 }
             }
+            for number in 1...trainingDayCount {
+                let key = "GIORNO \(number)"
+                if sequenceToWeekday[key] == nil {
+                    let used = Set(sequenceToWeekday.values)
+                    sequenceToWeekday[key] = weekdayNames.first(where: { !used.contains($0) }) ?? weekdayNames[number - 1]
+                }
+            }
             if !days.contains(selectedDay) { selectedDay = days.first ?? "GIORNO 1" }
         } else if !weekdayNames.contains(selectedDay) {
             selectedDay = weekdayNames.first ?? "LUNEDÌ"
@@ -392,6 +439,13 @@ final class WorkoutStore: ObservableObject {
             if let n = active.firstIndex(of: exercises[i].day) { exercises[i].day = "GIORNO \(n + 1)" }
         }
         selectedDay = active.firstIndex(of: oldSelected).map { "GIORNO \($0 + 1)" } ?? days.first ?? "GIORNO 1"
+        for number in 1...trainingDayCount {
+            let key = "GIORNO \(number)"
+            if sequenceToWeekday[key] == nil {
+                let used = Set(sequenceToWeekday.values)
+                sequenceToWeekday[key] = weekdayNames.first(where: { !used.contains($0) }) ?? weekdayNames[number - 1]
+            }
+        }
     }
 
     private func switchToWeekdays() {
