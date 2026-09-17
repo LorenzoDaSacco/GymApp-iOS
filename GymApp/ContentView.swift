@@ -184,14 +184,8 @@ struct ExerciseCard: View {
                     Text(exercise.name).font(.headline)
                     Text(exercise.group).font(.caption.bold()).foregroundStyle(accentColor)
                     Text(exercise.focus).font(.caption).foregroundStyle(.secondary)
-                    if store.repetitionMode == .general {
-                        Text("Scheda: \(exercise.sets.count) × \(exercise.targetReps)")
-                            .font(.caption.bold()).foregroundStyle(accentColor)
-                    } else {
-                        let targets = exercise.sets.map { $0.prescribedReps ?? exercise.targetReps }
-                        Text("Scheda: " + targets.joined(separator: " · "))
-                            .font(.caption.bold()).foregroundStyle(accentColor)
-                    }
+                    Text("Scheda: \(exercise.sets.count) serie")
+                        .font(.caption.bold()).foregroundStyle(accentColor)
                 }
                 Spacer()
                 Button(editing ? "Fine" : "Modifica") { editing.toggle() }
@@ -219,7 +213,7 @@ struct ExerciseCard: View {
 
             HStack(spacing: 10) {
                 Text("SERIE").frame(width: 34, alignment: .leading)
-                Text("REPS").frame(width: 70, alignment: .leading)
+                if store.repetitionMode == .perSet { Text("REPS").frame(width: 58, alignment: .leading) }
                 Text("PESO").frame(width: 82, alignment: .leading)
                 Spacer()
                 Text("✓").frame(width: 32)
@@ -353,19 +347,21 @@ struct SetRow: View {
                 .font(.caption.bold())
                 .frame(width: 34, alignment: .leading)
 
-            // REPS e PESO sono sempre i dati REALMENTE eseguiti e sono
-            // indipendenti per ogni serie. Il target della scheda è mostrato
-            // nell'intestazione dell'esercizio e non sostituisce le reps reali.
-            TextField("reps", text: $repsDraft)
-                .keyboardType(.numberPad)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 70)
-                .focused($focus, equals: .reps)
-                .disabled(!editing)
-                .onAppear { syncDrafts() }
-                .onChange(of: focus) { _, newFocus in
-                    if newFocus != .reps { commitReps() }
-                }
+            // Modalità generale: il target è unico per tutto l'esercizio
+            // e ogni serie mostra/modifica soltanto il proprio peso.
+            // Modalità per serie: ogni serie ha le proprie reps effettive + peso.
+            if store.repetitionMode == .perSet {
+                TextField("reps", text: $repsDraft)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 58)
+                    .focused($focus, equals: .reps)
+                    .disabled(!editing)
+                    .onAppear { syncDrafts() }
+                    .onChange(of: focus) { _, newFocus in
+                        if newFocus != .reps { commitReps() }
+                    }
+            }
 
             if set.isBackOff {
                 Text(format(store.backOffWeight(exerciseID: exercise.id)))
@@ -412,8 +408,8 @@ struct SetRow: View {
     }
 
     private func syncDrafts() {
-        weightDraft = format(set.weight)
-        repsDraft = set.reps
+        if weightDraft.isEmpty { weightDraft = format(set.weight) }
+        if repsDraft.isEmpty { repsDraft = set.reps }
     }
 
     private func syncWeight() {
@@ -421,8 +417,8 @@ struct SetRow: View {
     }
 
     private func commitBeforeToggle() {
-        commitReps()
         commitWeight()
+        commitReps()
     }
 
     private func commitWeight() {
@@ -439,11 +435,11 @@ struct SetRow: View {
     }
 
     private func commitReps() {
+        guard store.repetitionMode == .perSet else { return }
         let value = repsDraft.filter(\.isNumber).prefix(3).description
         if value != set.reps {
             store.setReps(value, exerciseID: exercise.id, setID: set.id)
         }
-        repsDraft = value
     }
 
     private func format(_ v: Double) -> String {
