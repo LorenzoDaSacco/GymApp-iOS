@@ -25,9 +25,34 @@ struct WidgetWorkoutSet: Codable {
 
 struct WidgetExercise: Codable {
     let day: String
+    /// Giorno della settimana reale a cui appartiene l'allenamento.
+    /// È una copia esplicita del mapping calcolato dall'app, così il widget
+    /// non deve ricostruire la relazione GIORNO X -> lunedì/domenica.
+    let weekday: String?
     let name: String
     let sets: [WidgetWorkoutSet]
     let recovery: String
+
+    init(day: String, weekday: String? = nil, name: String, sets: [WidgetWorkoutSet], recovery: String) {
+        self.day = day
+        self.weekday = weekday
+        self.name = name
+        self.sets = sets
+        self.recovery = recovery
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case day, weekday, name, sets, recovery
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        day = try c.decode(String.self, forKey: .day)
+        weekday = try c.decodeIfPresent(String.self, forKey: .weekday)
+        name = try c.decode(String.self, forKey: .name)
+        sets = try c.decode([WidgetWorkoutSet].self, forKey: .sets)
+        recovery = try c.decode(String.self, forKey: .recovery)
+    }
 }
 
 func gymCalendarEffectiveDate(at now: Date = Date()) -> Date { now }
@@ -137,10 +162,23 @@ enum WidgetDataReader {
         let normalizedTarget = normalizedDay(targetDay)
 
         if let snapshot = currentSnapshot() {
+            // Prima scelta: il giorno della settimana è già stato calcolato
+            // dall'app e memorizzato nell'esercizio. Questo evita qualsiasi
+            // ambiguità tra GIORNO 1/2/3 e LUNEDÌ...DOMENICA.
+            let weekday = normalizedDay(currentWeekday(at: date))
+            let explicitWeekdayMatches = snapshot.exercises.filter {
+                guard let exerciseWeekday = $0.weekday else { return false }
+                return normalizedDay(exerciseWeekday) == weekday
+            }
+            if !explicitWeekdayMatches.isEmpty {
+                return explicitWeekdayMatches
+            }
+
+            // Compatibilità con snapshot precedenti.
             let matching = snapshot.exercises.filter {
                 normalizedDay($0.day) == normalizedTarget
             }
-            if !matching.isEmpty || !snapshot.exercises.isEmpty {
+            if !matching.isEmpty {
                 return matching
             }
         }
@@ -150,8 +188,17 @@ enum WidgetDataReader {
 
         return raw.compactMap { exercise in
             guard normalizedDay(exercise.day) == normalizedTarget else { return nil }
+            let weekday: String?
+            if let snapshot = currentSnapshot(), snapshot.scheduleMode == ScheduleMode.trainingDays.rawValue {
+                weekday = snapshot.sequenceToWeekday.first {
+                    normalizedDay($0.key) == normalizedDay(exercise.day)
+                }?.value
+            } else {
+                weekday = exercise.day
+            }
             return WidgetExercise(
                 day: exercise.day,
+                weekday: weekday,
                 name: exercise.name,
                 sets: exercise.sets.map {
                     WidgetWorkoutSet(
@@ -166,22 +213,32 @@ enum WidgetDataReader {
     }
 
     static func todayProgress(at date: Date = Date()) -> (completedSets: Int, totalSets: Int, completedExercises: Int, totalExercises: Int) {
-        let weekday = currentWeekday(at: date)
-        let snapshot = currentSnapshot()
+        // I conteggi del widget derivano sempre dagli stessi esercizi che
+        // verrebbero mostrati per oggi. Non usiamo una voce dailyProgress
+        // eventualmente vecchia o rimasta a 0/0 come fonte primaria.
+        let exercises = todayExercises(at: date)
+        if !exercises.isEmpty {
+            let totalSets = exercises.reduce(0) { $0 + $1.sets.count }
+            let completedSets = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
+            let completedExercises = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
+            return (completedSets, totalSets, completedExercises, exercises.count)
+        }
 
-        // Fonte primaria: i numeri già calcolati dall'app per ogni giorno.
-        // Non dipende dal decoder del modello Exercise nel widget.
-        if let direct = snapshot?.dailyProgress {
-            let normalized = normalizedDay(weekday)
-            if let value = direct.first(where: { normalizedDay($0.key) == normalized })?.value {
+        // Solo se non esiste alcun esercizio per oggi usiamo i conteggi
+        // pre-calcolati come compatibilità con snapshot vecchi.
+        let targetDay = workoutDay(at: date)
+        let weekday = currentWeekday(at: date)
+        if let direct = currentSnapshot()?.dailyProgress {
+            if let targetDay,
+               let value = direct.first(where: { normalizedDay($0.key) == normalizedDay(targetDay) })?.value,
+               value.totalExercises > 0 {
+                return (value.completedSets, value.totalSets, value.completedExercises, value.totalExercises)
+            }
+            if let value = direct.first(where: { normalizedDay($0.key) == normalizedDay(weekday) })?.value,
+               value.totalExercises > 0 {
                 return (value.completedSets, value.totalSets, value.completedExercises, value.totalExercises)
             }
         }
-
-        let exercises = todayExercises(at: date)
-        let totalSets = exercises.reduce(0) { $0 + $1.sets.count }
-        let completedSets = exercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
-        let completedExercises = exercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
-        return (completedSets, totalSets, completedExercises, exercises.count)
+        return (0, 0, 0, 0)
     }
 }

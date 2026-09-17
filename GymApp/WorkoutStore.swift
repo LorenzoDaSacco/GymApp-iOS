@@ -413,8 +413,18 @@ final class WorkoutStore: ObservableObject {
         let calendar = Calendar.autoupdatingCurrent
         let today = calendar.startOfDay(for: now)
         let widgetExercises = exercises.map { exercise in
-            WidgetExercise(
+            // Inoltriamo al widget anche il giorno della settimana reale.
+            // In modalità settimana è semplicemente exercise.day; in modalità
+            // GIORNO 1/2/3 è il valore della mappa impostata nelle impostazioni.
+            let resolvedWeekday: String? = {
+                if scheduleMode == .weekdays { return exercise.day }
+                return sequenceToWeekday.first {
+                    normalizedWidgetDay($0.key) == normalizedWidgetDay(exercise.day)
+                }?.value
+            }()
+            return WidgetExercise(
                 day: exercise.day,
+                weekday: resolvedWeekday,
                 name: exercise.name,
                 sets: exercise.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) },
                 recovery: exercise.recovery
@@ -426,6 +436,12 @@ final class WorkoutStore: ObservableObject {
         // ogni giorno della settimana e li salva nel contenitore App Group.
         // In questo modo il widget legge direttamente i dati già pronti.
         var dailyProgress: [String: GymWidgetDayProgress] = [:]
+
+        // Salviamo i progressi usando ESATTAMENTE le etichette che il widget
+        // può usare per identificare l'allenamento. In modalità settimana sono
+        // LUNEDÌ...DOMENICA; in modalità GIORNO 1,2,3... sono GIORNO 1...
+        // Inoltre manteniamo le chiavi dei giorni della settimana per permettere
+        // al widget di risolvere sempre il giorno reale di oggi.
         for weekday in weekdayNames {
             let dayExercises = exercises.filter { normalizedWidgetDay($0.day) == normalizedWidgetDay(weekday) }
             let totalSets = dayExercises.reduce(0) { $0 + $1.sets.count }
@@ -437,6 +453,30 @@ final class WorkoutStore: ObservableObject {
                 completedSets: completedSets,
                 totalSets: totalSets
             )
+        }
+
+        if scheduleMode == .trainingDays {
+            // Un GIORNO X non contiene direttamente il nome della settimana:
+            // usa la mappa GIORNO X -> LUNEDÌ/MARTEDÌ/... e copia i conteggi
+            // dello stesso allenamento nella chiave GIORNO X.
+            for (trainingDay, weekday) in sequenceToWeekday {
+                let dayExercises = exercises.filter { normalizedWidgetDay($0.day) == normalizedWidgetDay(trainingDay) }
+                let totalSets = dayExercises.reduce(0) { $0 + $1.sets.count }
+                let completedSets = dayExercises.reduce(0) { $0 + $1.sets.filter(\.completed).count }
+                let completedExercises = dayExercises.filter { !$0.sets.isEmpty && $0.sets.allSatisfy(\.completed) }.count
+                dailyProgress[trainingDay] = GymWidgetDayProgress(
+                    completedExercises: completedExercises,
+                    totalExercises: dayExercises.count,
+                    completedSets: completedSets,
+                    totalSets: totalSets
+                )
+                // Se per qualsiasi motivo il mapping è presente ma l'esercizio
+                // usa ancora l'etichetta del giorno della settimana, manteniamo
+                // comunque disponibile lo stesso conteggio.
+                if dailyProgress[weekday] == nil {
+                    dailyProgress[weekday] = dailyProgress[trainingDay]
+                }
+            }
         }
 
         GymShared.writeWidgetSnapshot(

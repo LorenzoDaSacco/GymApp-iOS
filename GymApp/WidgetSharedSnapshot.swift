@@ -18,7 +18,7 @@ struct GymWidgetSnapshot: Codable {
 }
 
 extension GymShared {
-    static let widgetSnapshotKey = "gymapp.widget.snapshot.v2"
+    static let widgetSnapshotKey = "gymapp.widget.snapshot.v3"
 
     static func writeWidgetSnapshot(referenceDate: Date, realStartDate: Date, scheduleMode: String, sequenceToWeekday: [String: String], exercises: [WidgetExercise], dailyProgress: [String: GymWidgetDayProgress]) {
         let snapshot = GymWidgetSnapshot(updatedAt: Date(), referenceDate: referenceDate, realStartDate: realStartDate, scheduleMode: scheduleMode, sequenceToWeekday: sequenceToWeekday, exercises: exercises, dailyProgress: dailyProgress)
