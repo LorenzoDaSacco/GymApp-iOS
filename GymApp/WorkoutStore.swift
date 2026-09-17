@@ -4,6 +4,21 @@ import Combine
 import WidgetKit
 #endif
 
+enum GymCalendar {
+    static func effectiveDate(at now: Date = Date()) -> Date {
+        guard let data = GymShared.defaults()?.data(forKey: GymShared.calendarReferenceKey) ?? UserDefaults.standard.data(forKey: GymShared.calendarReferenceKey),
+              let reference = try? JSONDecoder().decode(GymShared.CalendarReference.self, from: data) else {
+            return now
+        }
+        let calendar = Calendar.current
+        let realToday = calendar.startOfDay(for: now)
+        let referenceRealDay = calendar.startOfDay(for: reference.realStartDate)
+        let referenceDay = calendar.startOfDay(for: reference.referenceDate)
+        let offset = calendar.dateComponents([.day], from: referenceRealDay, to: realToday).day ?? 0
+        return calendar.date(byAdding: .day, value: offset, to: referenceDay) ?? reference.referenceDate
+    }
+}
+
 @MainActor
 final class WorkoutStore: ObservableObject {
     @Published var selectedDay = "LUNEDÌ"
@@ -11,6 +26,7 @@ final class WorkoutStore: ObservableObject {
     @Published var scheduleMode: ScheduleMode = .weekdays
     @Published var repetitionMode: RepetitionMode = .general
     @Published var trainingDayCount: Int = 1
+    @Published private(set) var calendarClock = Date()
 
     private let weekdayNames = ["LUNEDÌ","MARTEDÌ","MERCOLEDÌ","GIOVEDÌ","VENERDÌ","SABATO","DOMENICA"]
     private var sequenceToWeekday: [String: String] = [:]
@@ -18,6 +34,7 @@ final class WorkoutStore: ObservableObject {
     private let legacyKey = GymShared.legacyKey
     private let settingsKey = "gymapp.settings.v2"
     private let sequenceMapKey = "gymapp.sequenceMap.v1"
+    private let calendarReferenceKey = GymShared.calendarReferenceKey
 
     var days: [String] {
         switch scheduleMode {
@@ -41,6 +58,29 @@ final class WorkoutStore: ObservableObject {
             persist()
         }
         refreshSelectedDayForToday()
+    }
+
+    /// Data virtuale usata dall'app e dal widget. Normalmente coincide con oggi;
+    /// se l'utente corregge "Che giorno è?", da quel momento avanza di un giorno
+    /// automaticamente a ogni cambio di data reale.
+    var currentCalendarDate: Date {
+        GymCalendar.effectiveDate(at: calendarClock)
+    }
+
+    func setCalendarDate(_ date: Date) {
+        let calendar = Calendar.current
+        let reference = GymShared.CalendarReference(
+            referenceDate: calendar.startOfDay(for: date),
+            realStartDate: calendar.startOfDay(for: Date())
+        )
+        if let data = try? JSONEncoder().encode(reference) {
+            UserDefaults.standard.set(data, forKey: calendarReferenceKey)
+            GymShared.defaults()?.set(data, forKey: calendarReferenceKey)
+        }
+        refreshSelectedDayForToday(force: true)
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadAllTimelines()
+        #endif
     }
 
     var dayExercises: [Exercise] { exercises.filter { $0.day == selectedDay } }
@@ -85,16 +125,18 @@ final class WorkoutStore: ObservableObject {
     func refreshSelectedDayForToday(force: Bool = false) {
         let calendar = Calendar.current
         let now = Date()
+        calendarClock = now
+        let effectiveDate = currentCalendarDate
         let startOfToday = calendar.startOfDay(for: now)
-        let markerKey = "gymapp.lastAutoDay.v1"
+        let markerKey = "gymapp.lastAutoDay.v2"
         let lastMarker = UserDefaults.standard.object(forKey: markerKey) as? Date
         if !force, let lastMarker, calendar.isDate(lastMarker, inSameDayAs: now) { return }
 
         let target: String?
         if scheduleMode == .weekdays {
-            target = weekdayName(for: now, calendar: calendar)
+            target = weekdayName(for: effectiveDate, calendar: calendar)
         } else {
-            let weekday = weekdayName(for: now, calendar: calendar)
+            let weekday = weekdayName(for: effectiveDate, calendar: calendar)
             target = sequenceToWeekday.first(where: { $0.value == weekday })?.key
         }
 

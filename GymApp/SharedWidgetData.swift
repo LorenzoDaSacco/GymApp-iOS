@@ -7,6 +7,13 @@ enum GymShared {
     static let appGroup = "group.com.gymtrackerpro.shared"
     static let workoutsKey = "gymapp.native.v5"
     static let legacyKey = "gymapp.native.v4"
+    static let calendarReferenceKey = "gymapp.calendar.reference.v1"
+
+    struct CalendarReference: Codable {
+        let referenceDate: Date
+        let realStartDate: Date
+    }
+
     static func defaults() -> UserDefaults? { UserDefaults(suiteName: appGroup) }
 }
 
@@ -22,10 +29,34 @@ struct WidgetExercise: Codable {
     let recovery: String
 }
 
+private func loadCalendarReference() -> GymShared.CalendarReference? {
+    let defaults = GymShared.defaults()
+    if let data = defaults?.data(forKey: GymShared.calendarReferenceKey),
+       let value = try? JSONDecoder().decode(GymShared.CalendarReference.self, from: data) {
+        return value
+    }
+    if let data = UserDefaults.standard.data(forKey: GymShared.calendarReferenceKey),
+       let value = try? JSONDecoder().decode(GymShared.CalendarReference.self, from: data) {
+        return value
+    }
+    return nil
+}
+
+func gymCalendarEffectiveDate(at now: Date = Date()) -> Date {
+    guard let reference = loadCalendarReference() else { return now }
+    let calendar = Calendar.current
+    let realToday = calendar.startOfDay(for: now)
+    let referenceRealDay = calendar.startOfDay(for: reference.realStartDate)
+    let referenceDay = calendar.startOfDay(for: reference.referenceDate)
+    let offset = calendar.dateComponents([.day], from: referenceRealDay, to: realToday).day ?? 0
+    return calendar.date(byAdding: .day, value: offset, to: referenceDay) ?? reference.referenceDate
+}
+
 enum WidgetDay {
     static let all = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
     static func today(calendar: Calendar = .current, date: Date = Date()) -> String {
-        switch calendar.component(.weekday, from: date) {
+        let effectiveDate = gymCalendarEffectiveDate(at: date)
+        switch calendar.component(.weekday, from: effectiveDate) {
         case 2: return all[0]
         case 3: return all[1]
         case 4: return all[2]

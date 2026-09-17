@@ -922,6 +922,36 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Che giorno è?") {
+                DatePicker(
+                    "Data di oggi",
+                    selection: Binding(
+                        get: { store.currentCalendarDate },
+                        set: { store.setCalendarDate($0) }
+                    ),
+                    displayedComponents: [.date]
+                )
+                .datePickerStyle(.graphical)
+
+                Text(store.currentCalendarDate.formatted(
+                    Date.FormatStyle()
+                        .weekday(.wide)
+                        .day()
+                        .month(.wide)
+                        .year()
+                ))
+                .font(.subheadline.bold())
+                .foregroundStyle(accentColor)
+
+                Button("Imposta automaticamente la data dell'iPhone") {
+                    store.setCalendarDate(Date())
+                }
+
+                Text("Il calendario si aggiorna automaticamente allo scoccare delle 00:00. Se la data è sbagliata, seleziona manualmente quella corretta: da quel momento l'app avanzerà di un giorno a ogni nuova giornata.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Ripetizioni") {
                 Picker("Prescrizione", selection: Binding(
                     get: { store.repetitionMode },

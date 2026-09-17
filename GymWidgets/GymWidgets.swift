@@ -111,34 +111,20 @@ struct CombinedProgressWidgetView: View {
 
     var body: some View {
         if family == .systemSmall {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(entry.day)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Text("OGGI")
-                    .font(.caption.bold())
-
-                HStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
                     Image(systemName: "figure.strengthtraining.traditional")
-                        .font(.caption)
-                    Text("Esercizi")
-                        .font(.caption.bold())
-                    Spacer(minLength: 2)
-                    Text("\(entry.completedExercises)/\(entry.totalExercises)")
                         .font(.title3.bold())
+                    Text("\(entry.completedExercises)/\(entry.totalExercises)")
+                        .font(.title2.bold())
                         .monospacedDigit()
                 }
 
-                HStack(spacing: 7) {
+                HStack(spacing: 10) {
                     Image(systemName: "square.stack.3d.up.fill")
-                        .font(.caption)
-                    Text("Serie")
-                        .font(.caption.bold())
-                    Spacer(minLength: 2)
-                    Text("\(entry.completedSets)/\(entry.totalSets)")
                         .font(.title3.bold())
+                    Text("\(entry.completedSets)/\(entry.totalSets)")
+                        .font(.title2.bold())
                         .monospacedDigit()
                 }
             }
