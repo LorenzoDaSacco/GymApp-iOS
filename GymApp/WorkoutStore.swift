@@ -78,6 +78,7 @@ final class WorkoutStore: ObservableObject {
             GymShared.defaults()?.set(data, forKey: calendarReferenceKey)
         }
         refreshSelectedDayForToday(force: true)
+        writeWidgetSnapshot()
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
@@ -413,9 +414,33 @@ final class WorkoutStore: ObservableObject {
         UserDefaults.standard.set(data, forKey: key)
         GymShared.defaults()?.set(data, forKey: key)
         saveSettings()
+        writeWidgetSnapshot()
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
+    }
+
+    private func writeWidgetSnapshot() {
+        let calendar = Calendar.current
+        let referenceData = GymShared.defaults()?.data(forKey: calendarReferenceKey) ?? UserDefaults.standard.data(forKey: calendarReferenceKey)
+        let reference = referenceData.flatMap { try? JSONDecoder().decode(GymShared.CalendarReference.self, from: $0) }
+        let realStart = reference?.realStartDate ?? calendar.startOfDay(for: Date())
+        let referenceDate = reference?.referenceDate ?? calendar.startOfDay(for: Date())
+        let widgetExercises = exercises.map { exercise in
+            WidgetExercise(
+                day: exercise.day,
+                name: exercise.name,
+                sets: exercise.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) },
+                recovery: exercise.recovery
+            )
+        }
+        GymShared.writeWidgetSnapshot(
+            referenceDate: referenceDate,
+            realStartDate: realStart,
+            scheduleMode: scheduleMode.rawValue,
+            sequenceToWeekday: sequenceToWeekday,
+            exercises: widgetExercises
+        )
     }
 
     private func load() {

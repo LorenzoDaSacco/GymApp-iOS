@@ -24,6 +24,7 @@ struct WidgetWorkoutSet: Codable {
 }
 
 struct WidgetExercise: Codable {
+    let day: String
     let name: String
     let sets: [WidgetWorkoutSet]
     let recovery: String
@@ -75,6 +76,36 @@ enum WidgetDataReader {
         let trainingDayCount: Int
     }
 
+    private static func snapshotEffectiveDate(at date: Date) -> Date? {
+        guard let snapshot = GymShared.readWidgetSnapshot() else { return nil }
+        let calendar = Calendar.current
+        let realToday = calendar.startOfDay(for: date)
+        let realStart = calendar.startOfDay(for: snapshot.realStartDate)
+        let reference = calendar.startOfDay(for: snapshot.referenceDate)
+        let offset = calendar.dateComponents([.day], from: realStart, to: realToday).day ?? 0
+        return calendar.date(byAdding: .day, value: offset, to: reference)
+    }
+
+    private static func snapshotWorkoutDay(at date: Date) -> String? {
+        guard let snapshot = GymShared.readWidgetSnapshot() else { return nil }
+        let effectiveDate = snapshotEffectiveDate(at: date) ?? date
+        let calendar = Calendar.current
+        let weekday: String
+        switch calendar.component(.weekday, from: effectiveDate) {
+        case 2: weekday = WidgetDay.all[0]
+        case 3: weekday = WidgetDay.all[1]
+        case 4: weekday = WidgetDay.all[2]
+        case 5: weekday = WidgetDay.all[3]
+        case 6: weekday = WidgetDay.all[4]
+        case 7: weekday = WidgetDay.all[5]
+        default: weekday = WidgetDay.all[6]
+        }
+        if snapshot.scheduleMode == ScheduleMode.trainingDays.rawValue {
+            return snapshot.sequenceToWeekday.first(where: { $0.value == weekday })?.key
+        }
+        return weekday
+    }
+
     static func allExercises() -> [Exercise] {
         guard let data = GymShared.defaults()?.data(forKey: GymShared.workoutsKey),
               let all = try? JSONDecoder().decode([Exercise].self, from: data) else { return [] }
@@ -82,25 +113,8 @@ enum WidgetDataReader {
     }
 
     static func currentWorkoutDay(at date: Date = Date()) -> String? {
-        let weekday = WidgetDay.today(date: date)
-        guard let data = GymShared.defaults()?.data(forKey: "gymapp.settings.v2") ?? UserDefaults.standard.data(forKey: "gymapp.settings.v2"),
-              let settings = try? JSONDecoder().decode(SettingsPayload.self, from: data) else {
-            return weekday
-        }
-
-        guard settings.scheduleMode == .trainingDays else {
-            return weekday
-        }
-
-        guard let map = (GymShared.defaults()?.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) ??
-                        (UserDefaults.standard.dictionary(forKey: "gymapp.sequenceMap.v1") as? [String: String]) else {
-            return nil
-        }
-
-        // In modalità GIORNO 1, 2, 3... il numero è legato al giorno
-        // della settimana configurato dall'utente. Se oggi non è uno dei
-        // giorni di allenamento, non mostriamo per errore GIORNO 1.
-        return map.first(where: { $0.value == weekday })?.key
+        if let snapshot = GymShared.readWidgetSnapshot(), let day = snapshotWorkoutDay(at: date) { return day }
+        return WidgetDay.today(date: date)
     }
 
     static func currentWorkoutDayLabel(at date: Date = Date()) -> String {
@@ -109,14 +123,13 @@ enum WidgetDataReader {
 
     static func todayExercises(at date: Date = Date()) -> [WidgetExercise] {
         guard let day = currentWorkoutDay(at: date) else { return [] }
+        if let snapshot = GymShared.readWidgetSnapshot() {
+            return snapshot.exercises.filter { $0.day == day }
+        }
         return allExercises()
             .filter { $0.day == day }
             .map { exercise in
-                WidgetExercise(
-                    name: exercise.name,
-                    sets: exercise.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) },
-                    recovery: exercise.recovery
-                )
+                WidgetExercise(day: exercise.day, name: exercise.name, sets: exercise.sets.map { WidgetWorkoutSet(reps: $0.reps, weight: $0.weight, completed: $0.completed) }, recovery: exercise.recovery)
             }
     }
 
