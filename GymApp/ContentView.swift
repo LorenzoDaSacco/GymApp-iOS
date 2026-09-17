@@ -176,6 +176,7 @@ struct ExerciseCard: View {
     let exercise: Exercise
     @State private var editing = false
     @State private var showingDeleteConfirmation = false
+    @State private var targetRepsDraft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -184,16 +185,35 @@ struct ExerciseCard: View {
                     Text(exercise.name).font(.headline)
                     Text(exercise.group).font(.caption.bold()).foregroundStyle(accentColor)
                     Text(exercise.focus).font(.caption).foregroundStyle(.secondary)
-                    Text("Scheda: \(exercise.sets.count) serie")
+                    Text("Scheda: \(exercise.sets.count) serie \(exercise.targetReps)")
                         .font(.caption.bold()).foregroundStyle(accentColor)
                 }
                 Spacer()
-                Button(editing ? "Fine" : "Modifica") { editing.toggle() }
+                Button(editing ? "Fine" : "Modifica") {
+                    if editing { commitTargetReps() }
+                    else { targetRepsDraft = exercise.targetReps }
+                    editing.toggle()
+                }
             }
 
             RecoveryTimerSection(store: store, exercise: exercise, editing: editing, accentColor: accentColor)
 
             if editing {
+                HStack(spacing: 10) {
+                    Text("Ripetizioni")
+                        .font(.caption.bold())
+                    TextField("8-10", text: $targetRepsDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.numbersAndPunctuation)
+                        .frame(width: 110)
+                        .onSubmit { commitTargetReps() }
+                    Spacer()
+                }
+                .onAppear { targetRepsDraft = exercise.targetReps }
+                .onChange(of: exercise.targetReps) { _, newValue in
+                    if targetRepsDraft != newValue { targetRepsDraft = newValue }
+                }
+
                 Button(role: .destructive) { showingDeleteConfirmation = true } label: {
                     Label("Elimina esercizio", systemImage: "trash")
                         .font(.subheadline.bold())
@@ -245,6 +265,16 @@ struct ExerciseCard: View {
         } message: {
             Text("L'esercizio e tutte le sue serie verranno rimossi dalla scheda.")
         }
+    }
+
+    private func commitTargetReps() {
+        let value = targetRepsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            targetRepsDraft = exercise.targetReps
+            return
+        }
+        store.setTargetReps(value, exerciseID: exercise.id)
+        targetRepsDraft = value
     }
 }
 

@@ -156,6 +156,19 @@ final class WorkoutStore: ObservableObject {
 
     func saveWeightHistory(weight: Double, exerciseID: UUID, setID: UUID) { updateWeight(weight, exerciseID: exerciseID, setID: setID) }
 
+    func setTargetReps(_ reps: String, exerciseID: UUID) {
+        guard let ei = exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
+        let value = reps.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        exercises[ei].targetReps = value
+        if repetitionMode == .perSet {
+            for si in exercises[ei].sets.indices where exercises[ei].sets[si].prescribedReps == nil {
+                exercises[ei].sets[si].prescribedReps = value
+            }
+        }
+        persist()
+    }
+
     func setReps(_ reps: String, exerciseID: UUID, setID: UUID) {
         guard let ei = exercises.firstIndex(where: { $0.id == exerciseID }), let si = exercises[ei].sets.firstIndex(where: { $0.id == setID }) else { return }
         exercises[ei].sets[si].reps = reps.filter(\.isNumber).prefix(3).description
