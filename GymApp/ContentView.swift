@@ -348,8 +348,13 @@ struct SetRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("S\(index + 1)").font(.caption.bold()).frame(width: 34, alignment: .leading)
+            Text("S\(index + 1)")
+                .font(.caption.bold())
+                .frame(width: 34, alignment: .leading)
 
+            // In general mode the prescription is shown once in the exercise
+            // header ("3 × 8-10"). Each row therefore contains ONLY its weight.
+            // In per-set mode the target and actual reps remain editable here.
             if store.repetitionMode == .perSet {
                 Text(set.prescribedReps ?? exercise.targetReps)
                     .font(.caption.bold())
@@ -359,17 +364,21 @@ struct SetRow: View {
             if set.isBackOff {
                 Text(format(store.backOffWeight(exerciseID: exercise.id)))
                     .font(.body.bold())
-                    .frame(width: 82, alignment: .leading)
+                    .frame(width: store.repetitionMode == .general ? 112 : 82, alignment: .leading)
             } else {
                 TextField("kg", text: $weightDraft)
                     .keyboardType(.decimalPad)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 82)
+                    .frame(width: store.repetitionMode == .general ? 112 : 82)
                     .focused($focus, equals: .weight)
                     .disabled(!editing)
                     .onAppear { syncDrafts() }
-                    .onChange(of: set.weight) { _, _ in if focus != .weight { syncWeight() } }
-                    .onChange(of: focus) { _, newFocus in if newFocus != .weight { commitWeight() } }
+                    .onChange(of: set.weight) { _, _ in
+                        if focus != .weight { syncWeight() }
+                    }
+                    .onChange(of: focus) { _, newFocus in
+                        if newFocus != .weight { commitWeight() }
+                    }
             }
 
             if store.repetitionMode == .perSet {
@@ -380,17 +389,26 @@ struct SetRow: View {
                     .focused($focus, equals: .reps)
                     .disabled(!editing)
                     .onAppear { syncDrafts() }
-                    .onChange(of: focus) { _, newFocus in if newFocus != .reps { commitReps() } }
+                    .onChange(of: focus) { _, newFocus in
+                        if newFocus != .reps { commitReps() }
+                    }
             }
 
             Spacer()
-            Button { commitBeforeToggle(); store.toggle(exercise.id, setID: set.id); focus = nil } label: {
+
+            Button {
+                commitBeforeToggle()
+                focus = nil
+                store.toggle(exercise.id, setID: set.id)
+            } label: {
                 Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
+                    .foregroundStyle(set.completed ? accentColor : .secondary)
             }
             .buttonStyle(.plain)
             .frame(width: 32)
         }
+        .contentShape(Rectangle())
         .onAppear { syncDrafts() }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
@@ -405,15 +423,20 @@ struct SetRow: View {
         if repsDraft.isEmpty { repsDraft = set.reps }
     }
 
-    private func syncWeight() { weightDraft = format(set.weight) }
+    private func syncWeight() {
+        weightDraft = format(set.weight)
+    }
 
     private func commitBeforeToggle() {
-        commitWeight(); commitReps()
+        commitWeight()
+        commitReps()
     }
 
     private func commitWeight() {
         guard !set.isBackOff else { return }
-        let raw = weightDraft.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = weightDraft
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard let value = Double(raw), value > 0 else {
             weightDraft = format(set.weight)
             return
@@ -425,7 +448,9 @@ struct SetRow: View {
     private func commitReps() {
         guard store.repetitionMode == .perSet else { return }
         let value = repsDraft.filter(\.isNumber).prefix(3).description
-        if value != set.reps { store.setReps(value, exerciseID: exercise.id, setID: set.id) }
+        if value != set.reps {
+            store.setReps(value, exerciseID: exercise.id, setID: set.id)
+        }
     }
 
     private func format(_ v: Double) -> String {

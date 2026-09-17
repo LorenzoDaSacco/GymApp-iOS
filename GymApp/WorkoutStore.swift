@@ -298,8 +298,28 @@ final class WorkoutStore: ObservableObject {
         let shared = GymShared.defaults()?.data(forKey: key) ?? GymShared.defaults()?.data(forKey: legacyKey)
         guard let data = standard ?? shared, let decoded = try? JSONDecoder().decode([Exercise].self, from: data) else { return }
         var migrated = decoded
-        // Vecchio back-off: se l'ultima serie non era marcata, non cancelliamo dati.
+
+        // Ripara i dati creati dalle versioni precedenti in cui peso e reps
+        // potevano finire nei due campi invertiti. Lo stato impossibile è
+        // "peso = 0" con un numero positivo nel campo reps: in quel caso il
+        // numero inserito era il peso. Spostiamo quindi quel valore nel peso
+        // e ricaviamo le reps effettive dal target, senza toccare le serie
+        // già corrette. È una migrazione una tantum perché dopo il salvataggio
+        // il peso non è più 0.
         for i in migrated.indices {
+            for j in migrated[i].sets.indices {
+                guard migrated[i].sets[j].weight <= 0,
+                      let misplacedWeight = Double(migrated[i].sets[j].reps),
+                      misplacedWeight > 0 else { continue }
+
+                migrated[i].sets[j].weight = misplacedWeight
+                migrated[i].sets[j].reps = Self.lowerBoundReps(migrated[i].sets[j].prescribedReps ?? migrated[i].targetReps)
+                if migrated[i].sets[j].history.isEmpty {
+                    migrated[i].sets[j].history = [WeightLog(weight: misplacedWeight)]
+                }
+            }
+
+            // Vecchio back-off: se l'ultima serie non era marcata, non cancelliamo dati.
             if migrated[i].backOffEnabled, let last = migrated[i].sets.last, !last.isBackOff {
                 migrated[i].backOffEnabled = false
             }
