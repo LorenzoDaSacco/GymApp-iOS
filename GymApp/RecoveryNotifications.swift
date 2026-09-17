@@ -7,9 +7,7 @@ final class RecoveryNotifications {
     static let shared = RecoveryNotifications()
     private init() {}
 
-    private let endDatesKey = "gym.recovery.endDates.v3"
-    private let pausedKey = "gym.recovery.pausedRemaining.v1"
-    private let durationsKey = "gym.recovery.durations.v1"
+    private let endDatesKey = "gym.recovery.endDates.v2"
 
     func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -17,13 +15,11 @@ final class RecoveryNotifications {
 
     @discardableResult
     func start(for setID: UUID, exerciseName: String, recovery: String) -> Date? {
+        // Every completed set gets a recovery timer. If an exercise has no recovery
+        // value yet, use the same safe default shown by the UI instead of silently failing.
         let recoveryText = recovery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "2:00" : recovery
         guard let seconds = Self.seconds(from: recoveryText), seconds > 0 else { return nil }
-        return start(for: setID, exerciseName: exerciseName, seconds: seconds, recoveryText: recoveryText)
-    }
 
-    @discardableResult
-    private func start(for setID: UUID, exerciseName: String, seconds: TimeInterval, recoveryText: String) -> Date? {
         let id = notificationID(for: setID)
         let endDate = Date().addingTimeInterval(seconds)
 
@@ -39,75 +35,18 @@ final class RecoveryNotifications {
         center.add(request)
 
         saveEndDate(endDate, for: setID)
-        saveDuration(seconds, for: setID)
-        removePaused(for: setID)
         startLiveActivity(setID: setID, exerciseName: exerciseName, recovery: recoveryText, endDate: endDate)
         return endDate
-    }
-
-    func pause(for setID: UUID) {
-        guard let endDate = endDate(for: setID) else { return }
-        let remaining = max(0, endDate.timeIntervalSinceNow)
-        guard remaining > 0 else { return }
-        savePausedRemaining(remaining, for: setID)
-        removeEndDate(for: setID)
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationID(for: setID)])
-        endLiveActivity(setID: setID)
-    }
-
-    @discardableResult
-    func resume(for setID: UUID, exerciseName: String, recoveryText: String) -> Date? {
-        guard let remaining = pausedRemaining(for: setID), remaining > 0 else { return nil }
-        return start(for: setID, exerciseName: exerciseName, seconds: remaining, recoveryText: recoveryText)
-    }
-
-    @discardableResult
-    func adjust(for setID: UUID, seconds delta: TimeInterval, exerciseName: String, recoveryText: String) -> Date? {
-        let currentRemaining: TimeInterval
-        if let paused = pausedRemaining(for: setID) {
-            currentRemaining = paused
-        } else if let end = endDate(for: setID) {
-            currentRemaining = max(0, end.timeIntervalSinceNow)
-        } else {
-            return nil
-        }
-
-        let newRemaining = max(5, currentRemaining + delta)
-        return start(for: setID, exerciseName: exerciseName, seconds: newRemaining, recoveryText: recoveryText)
-    }
-
-    func skip(for setID: UUID) {
-        cancel(for: setID)
     }
 
     func cancel(for setID: UUID) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationID(for: setID)])
         removeEndDate(for: setID)
-        removePaused(for: setID)
-        removeDuration(for: setID)
         endLiveActivity(setID: setID)
     }
 
     func endDate(for setID: UUID) -> Date? {
         storedEndDates()[setID.uuidString].flatMap(Date.init(timeIntervalSince1970:))
-    }
-
-    func pausedRemaining(for setID: UUID) -> TimeInterval? {
-        storedPaused()[setID.uuidString]
-    }
-
-    func remaining(for setID: UUID, now: Date = Date()) -> TimeInterval? {
-        if let paused = pausedRemaining(for: setID) { return paused }
-        guard let end = endDate(for: setID) else { return nil }
-        return max(0, end.timeIntervalSince(now))
-    }
-
-    func isPaused(for setID: UUID) -> Bool {
-        pausedRemaining(for: setID) != nil
-    }
-
-    func duration(for setID: UUID, fallback: TimeInterval = 120) -> TimeInterval {
-        storedDurations()[setID.uuidString] ?? fallback
     }
 
     static func seconds(from text: String) -> TimeInterval? {
@@ -128,6 +67,8 @@ final class RecoveryNotifications {
     private func startLiveActivity(setID: UUID, exerciseName: String, recovery: String, endDate: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
+        // One Live Activity per completed set. Starting Wednesday, Saturday, etc.
+        // follows exactly the same path as Monday; there is intentionally no day check.
         endLiveActivity(setID: setID)
 
         let attributes = RecoveryActivityAttributes(setID: setID.uuidString)
@@ -144,7 +85,7 @@ final class RecoveryNotifications {
                 pushType: nil
             )
         } catch {
-            // La notifica locale resta disponibile anche se le Live Activity sono disabilitate.
+            // Local notification remains active even if Live Activities are disabled.
         }
     }
 
@@ -165,14 +106,6 @@ final class RecoveryNotifications {
         UserDefaults.standard.dictionary(forKey: endDatesKey) as? [String: TimeInterval] ?? [:]
     }
 
-    private func storedPaused() -> [String: TimeInterval] {
-        UserDefaults.standard.dictionary(forKey: pausedKey) as? [String: TimeInterval] ?? [:]
-    }
-
-    private func storedDurations() -> [String: TimeInterval] {
-        UserDefaults.standard.dictionary(forKey: durationsKey) as? [String: TimeInterval] ?? [:]
-    }
-
     private func saveEndDate(_ date: Date, for setID: UUID) {
         var dates = storedEndDates()
         dates[setID.uuidString] = date.timeIntervalSince1970
@@ -183,29 +116,5 @@ final class RecoveryNotifications {
         var dates = storedEndDates()
         dates.removeValue(forKey: setID.uuidString)
         UserDefaults.standard.set(dates, forKey: endDatesKey)
-    }
-
-    private func savePausedRemaining(_ value: TimeInterval, for setID: UUID) {
-        var values = storedPaused()
-        values[setID.uuidString] = value
-        UserDefaults.standard.set(values, forKey: pausedKey)
-    }
-
-    private func removePaused(for setID: UUID) {
-        var values = storedPaused()
-        values.removeValue(forKey: setID.uuidString)
-        UserDefaults.standard.set(values, forKey: pausedKey)
-    }
-
-    private func saveDuration(_ value: TimeInterval, for setID: UUID) {
-        var values = storedDurations()
-        values[setID.uuidString] = value
-        UserDefaults.standard.set(values, forKey: durationsKey)
-    }
-
-    private func removeDuration(for setID: UUID) {
-        var values = storedDurations()
-        values.removeValue(forKey: setID.uuidString)
-        UserDefaults.standard.set(values, forKey: durationsKey)
     }
 }
