@@ -15,7 +15,7 @@ struct GymDayProvider: TimelineProvider {
         completion(GymDayEntry(date: Date(), day: WidgetDataReader.currentWorkoutDayLabel(), exercises: WidgetDataReader.todayExercises()))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymDayEntry>) -> Void) {
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let now = Date()
         let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
         let entries = [
@@ -44,7 +44,7 @@ struct GymProgressProvider: TimelineProvider {
         completion(GymProgressEntry(date: Date(), day: WidgetDataReader.currentWorkoutDayLabel(), completedSets: p.completedSets, totalSets: p.totalSets, completedExercises: p.completedExercises, totalExercises: p.totalExercises))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<GymProgressEntry>) -> Void) {
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let now = Date()
         let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
         let today = WidgetDataReader.todayProgress(at: now)
@@ -111,24 +111,31 @@ struct CombinedProgressWidgetView: View {
 
     var body: some View {
         if family == .systemSmall {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
                     Image(systemName: "figure.strengthtraining.traditional")
-                        .font(.title3.bold())
+                        .font(.system(size: 22, weight: .bold))
+                        .frame(width: 28)
                     Text("\(entry.completedExercises)/\(entry.totalExercises)")
-                        .font(.title2.bold())
+                        .font(.system(size: 24, weight: .black, design: .rounded))
                         .monospacedDigit()
+                        .minimumScaleFactor(0.75)
+                        .lineLimit(1)
                 }
 
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     Image(systemName: "square.stack.3d.up.fill")
-                        .font(.title3.bold())
+                        .font(.system(size: 22, weight: .bold))
+                        .frame(width: 28)
                     Text("\(entry.completedSets)/\(entry.totalSets)")
-                        .font(.title2.bold())
+                        .font(.system(size: 24, weight: .black, design: .rounded))
                         .monospacedDigit()
+                        .minimumScaleFactor(0.75)
+                        .lineLimit(1)
                 }
             }
-            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .padding(10)
             .containerBackground(for: .widget) { Color(.systemBackground) }
         } else {
             VStack(alignment: .leading, spacing: 8) {

@@ -22,8 +22,6 @@ struct MuscleMapView: UIViewRepresentable {
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {
-        // SwiftUI can call updateUIView many times while typing/editing a set.
-        // The SVG is expensive to parse, so reload it only when the target muscle changes.
         guard context.coordinator.loadedTarget != target else { return }
         context.coordinator.loadedTarget = target
 
@@ -32,62 +30,72 @@ struct MuscleMapView: UIViewRepresentable {
 
         svg = svg.replacingOccurrences(of: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>", with: "")
 
+        // La nuova SVG contiene fronte e retro nello stesso canvas 1312×1199.
+        // Ritagliamo la zona utile in base al muscolo allenato, così la figura
+        // rimane centrata e non viene mostrata minuscola nel riquadro.
         let viewBox: String
         switch target {
-        case .chest: viewBox = "85 75 255 185"
-        case .back: viewBox = "445 95 210 205"
-        case .shoulders: viewBox = "75 80 270 165"
-        case .biceps: viewBox = "45 135 315 145"
-        case .triceps: viewBox = "425 135 240 150"
-        case .quads: viewBox = "120 255 180 195"
-        case .hamstrings: viewBox = "450 255 190 205"
-        case .fullBody: viewBox = "0 0 753 703"
+        case .chest: viewBox = "120 145 380 235"
+        case .shoulders: viewBox = "115 175 390 180"
+        case .biceps: viewBox = "125 260 390 190"
+        case .quads: viewBox = "170 540 300 330"
+        case .back: viewBox = "750 145 480 410"
+        case .triceps: viewBox = "755 255 475 205"
+        case .hamstrings: viewBox = "810 610 330 250"
+        case .fullBody: viewBox = "90 130 1140 1030"
         }
 
-        let highlighted: [Int]
+        // ID reali presenti nella nuova SVG. Il fronte viene usato per petto,
+        // spalle, bicipiti e quadricipiti; il retro per dorso, tricipiti,
+        // femorali/glutei e polpacci.
+        let highlighted: [String]
         switch target {
-        case .chest: highlighted = [1, 2]
-        case .biceps: highlighted = [3, 4]
-        case .quads: highlighted = [11, 12]
-        case .back: highlighted = [17, 18]
-        case .triceps: highlighted = [19, 20]
-        case .hamstrings: highlighted = [24, 25, 26, 27, 28, 29, 30, 31]
-        case .shoulders: highlighted = [32, 33, 34, 35]
-        case .fullBody: highlighted = []
+        case .chest:
+            highlighted = ["front_pectoralis_left", "front_pectoralis_right"]
+        case .shoulders:
+            highlighted = ["front_deltoid_left", "front_deltoid_right", "back_rear_deltoid_left", "back_rear_deltoid_right"]
+        case .biceps:
+            highlighted = ["front_biceps_left", "front_biceps_right"]
+        case .quads:
+            highlighted = ["front_quad_left", "front_quad_right"]
+        case .back:
+            highlighted = ["back_lats_left", "back_lats_right", "back_trapezius", "back_erectors_left", "back_erectors_right"]
+        case .triceps:
+            highlighted = ["back_triceps_left", "back_triceps_right"]
+        case .hamstrings:
+            highlighted = ["back_hamstring_left", "back_hamstring_right", "back_glute_left", "back_glute_right"]
+        case .fullBody:
+            highlighted = []
         }
-        let ids = highlighted.map(String.init).joined(separator: ",")
+
+        let ids = highlighted.map { "'\($0)'" }.joined(separator: ",")
         let replacement = """
         <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="\(viewBox)" preserveAspectRatio="xMidYMid meet">
         """
-
         if let start = svg.range(of: #"<svg[^>]*>"#, options: .regularExpression) {
             svg.replaceSubrange(start, with: replacement)
         }
 
-        let t = target.rawValue
         let html = """
-        <html>
-        <head>
+        <html><head>
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
         <style>
         html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden}
         svg{width:100%;height:100%;display:block}
-        .a{opacity:1!important;filter:drop-shadow(0 0 5px #ff3347)}
-        .d{opacity:.14!important}
-        </style>
-        </head>
-        <body>
+        .muscle{transition:none!important}
+        .muscle.active{fill:#ff0000!important;fill-opacity:.86!important;stroke:#ff0000!important;stroke-width:2!important}
+        .muscle.dimmed{fill-opacity:.06!important}
+        </style></head><body>
         \(svg)
         <script>
-        const t="\(t)";
         const highlighted=[\(ids)];
-        document.querySelectorAll('[id^="muscle-"]').forEach(e=>{
-            const n=parseInt(e.id.replace('muscle-',''));
-            if(t!=='fullBody') e.classList.add(highlighted.includes(n)?'a':'d');
+        document.querySelectorAll('.muscle').forEach(el=>{
+            el.classList.remove('active','dimmed');
+            if (highlighted.length && highlighted.includes(el.id)) el.classList.add('active');
+            else if (highlighted.length) el.classList.add('dimmed');
         });
         </script>
-        </body>
-        </html>
+        </body></html>
         """
         web.loadHTMLString(html, baseURL: Bundle.main.bundleURL)
     }

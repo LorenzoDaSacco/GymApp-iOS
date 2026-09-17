@@ -45,7 +45,7 @@ private func loadCalendarReference() -> GymShared.CalendarReference? {
 
 func gymCalendarEffectiveDate(at now: Date = Date()) -> Date {
     guard let reference = loadCalendarReference() else { return now }
-    let calendar = Calendar.current
+    let calendar = Calendar.autoupdatingCurrent
     let realToday = calendar.startOfDay(for: now)
     let referenceRealDay = calendar.startOfDay(for: reference.realStartDate)
     let referenceDay = calendar.startOfDay(for: reference.referenceDate)
@@ -76,30 +76,25 @@ enum WidgetDataReader {
         let trainingDayCount: Int
     }
 
-    private static func snapshotEffectiveDate(at date: Date) -> Date? {
-        guard let snapshot = GymShared.readWidgetSnapshot() else { return nil }
-        let calendar = Calendar.current
-        let realToday = calendar.startOfDay(for: date)
-        let realStart = calendar.startOfDay(for: snapshot.realStartDate)
-        let reference = calendar.startOfDay(for: snapshot.referenceDate)
-        let offset = calendar.dateComponents([.day], from: realStart, to: realToday).day ?? 0
-        return calendar.date(byAdding: .day, value: offset, to: reference)
+    private static func actualWeekdayName(at date: Date = Date()) -> String {
+        let calendar = Calendar.autoupdatingCurrent
+        switch calendar.component(.weekday, from: date) {
+        case 2: return WidgetDay.all[0]
+        case 3: return WidgetDay.all[1]
+        case 4: return WidgetDay.all[2]
+        case 5: return WidgetDay.all[3]
+        case 6: return WidgetDay.all[4]
+        case 7: return WidgetDay.all[5]
+        default: return WidgetDay.all[6]
+        }
     }
 
     private static func snapshotWorkoutDay(at date: Date) -> String? {
         guard let snapshot = GymShared.readWidgetSnapshot() else { return nil }
-        let effectiveDate = snapshotEffectiveDate(at: date) ?? date
-        let calendar = Calendar.current
-        let weekday: String
-        switch calendar.component(.weekday, from: effectiveDate) {
-        case 2: weekday = WidgetDay.all[0]
-        case 3: weekday = WidgetDay.all[1]
-        case 4: weekday = WidgetDay.all[2]
-        case 5: weekday = WidgetDay.all[3]
-        case 6: weekday = WidgetDay.all[4]
-        case 7: weekday = WidgetDay.all[5]
-        default: weekday = WidgetDay.all[6]
-        }
+        // Il widget usa sempre il giorno reale dell'iPhone.
+        // Se la scheda usa GIORNO 1, 2, 3..., utilizziamo la tabella
+        // GIORNO -> giorno della settimana salvata nelle impostazioni.
+        let weekday = actualWeekdayName(at: date)
         if snapshot.scheduleMode == ScheduleMode.trainingDays.rawValue {
             return snapshot.sequenceToWeekday.first(where: { $0.value == weekday })?.key
         }
@@ -113,8 +108,8 @@ enum WidgetDataReader {
     }
 
     static func currentWorkoutDay(at date: Date = Date()) -> String? {
-        if let snapshot = GymShared.readWidgetSnapshot(), let day = snapshotWorkoutDay(at: date) { return day }
-        return WidgetDay.today(date: date)
+        if let day = snapshotWorkoutDay(at: date) { return day }
+        return actualWeekdayName(at: date)
     }
 
     static func currentWorkoutDayLabel(at date: Date = Date()) -> String {

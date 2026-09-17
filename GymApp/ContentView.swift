@@ -187,6 +187,7 @@ struct ExerciseCard: View {
     @State private var editing = false
     @State private var showingDeleteConfirmation = false
     @State private var targetRepsDraft = ""
+    @AppStorage("gymapp.showMuscleMap") private var showMuscleMap = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -262,9 +263,11 @@ struct ExerciseCard: View {
                 Text("\(exercise.sets.count) serie").font(.caption).foregroundStyle(.secondary)
             }
 
-            MuscleMapView(target: exercise.target)
-                .frame(height: 185)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
+            if showMuscleMap {
+                MuscleMapView(target: exercise.target)
+                    .frame(height: 185)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+            }
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
@@ -866,6 +869,7 @@ struct SettingsView: View {
     @ObservedObject var store: WorkoutStore
     @Binding var darkMode: Bool
     @Binding var accentColorName: String
+    @AppStorage("gymapp.showMuscleMap") private var showMuscleMap = true
 
     var body: some View {
         Form {
@@ -876,6 +880,7 @@ struct SettingsView: View {
                         HStack { Circle().fill(option.color).frame(width: 12, height: 12); Text(option.title) }.tag(option.rawValue)
                     }
                 }
+                Toggle("Mostra immagine muscolare", isOn: $showMuscleMap)
             }
 
             Section("Organizzazione allenamenti") {
