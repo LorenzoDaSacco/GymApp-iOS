@@ -23,3 +23,7 @@ Per le Live Activities, su iPhone devono essere abilitate nelle impostazioni di 
 
 ### Essenziale per i widget su iPhone
 L'IPA generato da GitHub Actions è **non firmato**. L'app e l'estensione `GymWidgets.appex` devono essere firmate con certificati/provisioning compatibili e App Groups abilitato per **entrambi** con `group.com.gymtrackerpro.shared`. Se il metodo di sideload non conserva gli entitlement, i widget possono non comparire o mostrare dati vuoti. Non è possibile correggere questo requisito con un semplice reload del codice.
+
+## Novità: Nilox ONAIR – monitoraggio cardiaco
+
+Vedi [README-NILOX-HEART.md](README-NILOX-HEART.md) per istruzioni, limitazioni sul background iOS e gestione dei dati. La nuova funzione è nella scheda **Cuore**; lo storico viene salvato separatamente dagli allenamenti.

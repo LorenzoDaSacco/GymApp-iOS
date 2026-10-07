@@ -73,6 +73,12 @@ struct ContentView: View {
             .tag(1)
 
             NavigationStack {
+                HeartDashboardView()
+            }
+            .tabItem { Label("Cuore", systemImage: "heart.fill") }
+            .tag(4)
+
+            NavigationStack {
                 AddExerciseView(store: store) { selectedTab = 0 }
             }
             .tabItem { Label("Aggiungi", systemImage: "plus.circle") }
@@ -1035,6 +1041,12 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("Nilox ONAIR") {
+                Label("Monitoraggio cardiaco", systemImage: "heart.text.square")
+                Text("Apri la scheda Cuore per collegare il bracciale e visualizzare le letture ogni 10 minuti. Lo storico del cuore è separato da quello degli esercizi.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Dati") {
                 Text("I dati vengono salvati localmente sul telefono.")
                 Button("Richiedi notifiche") { RecoveryNotifications.shared.requestPermission() }
@@ -1045,5 +1057,5 @@ struct SettingsView: View {
 }
 
 #Preview {
-    ContentView().environmentObject(WorkoutStore())
+    ContentView().environmentObject(WorkoutStore()).environmentObject(HeartRateMonitor())
 }
