@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UserNotifications
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -288,6 +289,7 @@ final class WorkoutStore: ObservableObject {
         persist()
         let exercise = exercises[ei]
         if willComplete {
+            remindWeightProgression(for: exercise)
             let recovery = exercise.recovery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "2:00" : exercise.recovery
             RecoveryNotifications.shared.start(for: setID, exerciseName: exercise.name, recovery: recovery)
         } else {
@@ -390,6 +392,35 @@ final class WorkoutStore: ObservableObject {
     func history(for exercise: Exercise) -> [WeightLog] { exercise.sets.flatMap(\.history).sorted { $0.date < $1.date } }
     func latestWeight(for exercise: Exercise) -> Double { history(for: exercise).last?.weight ?? exercise.sets.map(\.weight).max() ?? 0 }
     func maxWeight(for exercise: Exercise) -> Double { max(history(for: exercise).map(\.weight).max() ?? 0, exercise.sets.map(\.weight).max() ?? 0) }
+    // Promemoria progressione: solo serie normali, completate e con obiettivo numerico.
+    // Non modifica mai automaticamente il peso.
+    private func remindWeightProgression(for exercise: Exercise) {
+        guard UserDefaults.standard.bool(forKey: "gymapp.progressionReminders") else { return }
+        let sets = exercise.sets.filter { !$0.isBackOff }
+        guard !sets.isEmpty, sets.allSatisfy({ $0.completed && $0.weight > 0 }) else { return }
+        let reachedTarget = sets.enumerated().allSatisfy { _, set in
+            let prescription = (repetitionMode == .perSet ? set.prescribedReps : nil) ?? exercise.targetReps
+            // Esempi validi: 8-10, 8–10, 10. Solo una soglia esplicita.
+            let numbers = prescription.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+            guard let target = numbers.last, target > 0, target <= 100 else { return false }
+            return (Int(set.reps) ?? 0) >= target
+        }
+        guard reachedTarget else { return }
+        let today = Calendar.autoupdatingCurrent.startOfDay(for: Date()).timeIntervalSince1970
+        let key = "gymapp.progression.last.\(exercise.id.uuidString)"
+        guard UserDefaults.standard.double(forKey: key) != today else { return }
+        UserDefaults.standard.set(today, forKey: key)
+        let increment = max(0.5, UserDefaults.standard.double(forKey: "gymapp.progressionIncrement"))
+        let content = UNMutableNotificationContent()
+        content.title = "Progressione carico: \(exercise.name)"
+        content.body = "Hai raggiunto le ripetizioni previste in tutte le serie. Alla prossima seduta valuta +\(increment.formatted()) kg, mantenendo tecnica e controllo."
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "gymapp.progression.\(exercise.id.uuidString).\(Int(today))", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    func refreshWidgets() { writeWidgetSnapshot(); WidgetCenter.shared.reloadAllTimelines() }
+
     func persistChanges() { persist() }
 
     private func normalizedWidgetDay(_ value: String) -> String {

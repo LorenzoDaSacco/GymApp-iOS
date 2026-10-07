@@ -74,11 +74,11 @@ struct SchedaOggiWidgetView: View {
             if entry.exercises.isEmpty {
                 Spacer(); Text("Giorno libero").font(.subheadline); Text("Nessun esercizio").font(.caption).foregroundStyle(.secondary); Spacer()
             } else {
-                ForEach(Array(entry.exercises.prefix(6)), id: \.name) { exercise in
+                ForEach(Array(entry.exercises.prefix(6).enumerated()), id: \.offset) { item in
                     HStack(alignment: .firstTextBaseline) {
-                        Text(exercise.name).font(.caption.bold()).lineLimit(1)
+                        Text(item.element.name).font(.caption.bold()).lineLimit(1)
                         Spacer()
-                        Text("\(exercise.sets.count) serie").font(.caption2).foregroundStyle(.secondary)
+                        Text("\(item.element.sets.count) serie").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 if entry.exercises.count > 6 { Text("+ altri \(entry.exercises.count - 6)").font(.caption2).foregroundStyle(.secondary) }

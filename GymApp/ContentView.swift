@@ -870,6 +870,8 @@ struct SettingsView: View {
     @Binding var darkMode: Bool
     @Binding var accentColorName: String
     @AppStorage("gymapp.showMuscleMap") private var showMuscleMap = true
+    @AppStorage("gymapp.progressionReminders") private var progressionReminders = false
+    @AppStorage("gymapp.progressionIncrement") private var progressionIncrement = 2.5
 
     var body: some View {
         Form {
@@ -957,6 +959,29 @@ struct SettingsView: View {
                     Text("Esempio: S1 10 · S2 8 · S3 8. Ogni serie può avere una prescrizione diversa.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+            }
+
+            Section("Progressione dei carichi") {
+                Toggle("Ricordami quando aumentare il peso", isOn: $progressionReminders)
+                    .onChange(of: progressionReminders) { _, enabled in
+                        if enabled { RecoveryNotifications.shared.requestPermission() }
+                    }
+                if progressionReminders {
+                    Picker("Incremento suggerito", selection: $progressionIncrement) {
+                        Text("0,5 kg").tag(0.5)
+                        Text("1 kg").tag(1.0)
+                        Text("2,5 kg").tag(2.5)
+                        Text("5 kg").tag(5.0)
+                    }
+                    Text("Quando completi tutte le serie normali raggiungendo il limite superiore delle ripetizioni previste, ricevi un promemoria per valutare l'aumento nella prossima seduta. Non modifica i pesi automaticamente. Ignora il consiglio se tecnica e controllo peggiorano.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Widget") {
+                Button("Aggiorna i widget ora") { store.refreshWidgets() }
+                Text("Mostrano la scheda e i progressi del giorno reale. Per funzionare, app e widget devono essere firmati con lo stesso team e avere lo stesso App Group abilitato.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Dati") {
