@@ -70,6 +70,10 @@ struct SchedaOggiWidgetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(entry.day).font(.caption.bold()).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Image(systemName: "dumbbell.fill").foregroundStyle(.purple)
+                Text("TRAINING").font(.caption.bold()).tracking(1.2)
+            }
             Text("Scheda di oggi").font(.headline.bold())
             if entry.exercises.isEmpty {
                 Spacer(); Text("Giorno libero").font(.subheadline); Text("Nessun esercizio").font(.caption).foregroundStyle(.secondary); Spacer()
@@ -100,12 +104,12 @@ struct ProgressWidgetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Image(systemName: mode == .sets ? "square.stack.3d.up.fill" : "figure.strengthtraining.traditional")
-                .font(.title3)
+                .font(.title3).foregroundStyle(.purple)
             Text(mode == .sets ? "Serie" : "Esercizi").font(.caption.bold()).foregroundStyle(.secondary)
             Text(mode == .sets ? "\(entry.completedSets)/\(entry.totalSets)" : "\(entry.completedExercises)/\(entry.totalExercises)")
                 .font(.system(size: 30, weight: .black, design: .rounded))
                 .monospacedDigit()
-            ProgressView(value: fraction).tint(.accentColor)
+            ProgressView(value: fraction).tint(.purple)
             Text("Oggi").font(.caption2).foregroundStyle(.secondary)
         }
         .padding()

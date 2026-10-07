@@ -392,15 +392,34 @@ final class WorkoutStore: ObservableObject {
     func history(for exercise: Exercise) -> [WeightLog] { exercise.sets.flatMap(\.history).sorted { $0.date < $1.date } }
     func latestWeight(for exercise: Exercise) -> Double { history(for: exercise).last?.weight ?? exercise.sets.map(\.weight).max() ?? 0 }
     func maxWeight(for exercise: Exercise) -> Double { max(history(for: exercise).map(\.weight).max() ?? 0, exercise.sets.map(\.weight).max() ?? 0) }
-    // Promemoria progressione: solo serie normali, completate e con obiettivo numerico.
-    // Non modifica mai automaticamente il peso.
+    // Configurazione separata dai workout salvati: formato dati invariato.
+    private func progressionKey(_ id: UUID) -> String { "gymapp.progression.enabled.\(id.uuidString)" }
+    private func progressionPendingKey(_ id: UUID) -> String { "gymapp.progression.pending.\(id.uuidString)" }
+
+    func progressionEnabled(for id: UUID) -> Bool {
+        UserDefaults.standard.bool(forKey: progressionKey(id))
+    }
+
+    func setProgressionEnabled(_ enabled: Bool, for id: UUID) {
+        UserDefaults.standard.set(enabled, forKey: progressionKey(id))
+        objectWillChange.send()
+    }
+
+    func hasPendingProgression(for id: UUID) -> Bool {
+        UserDefaults.standard.bool(forKey: progressionPendingKey(id))
+    }
+
+    func acknowledgeProgression(for id: UUID) {
+        UserDefaults.standard.removeObject(forKey: progressionPendingKey(id))
+        objectWillChange.send()
+    }
+
     private func remindWeightProgression(for exercise: Exercise) {
-        guard UserDefaults.standard.bool(forKey: "gymapp.progressionReminders") else { return }
+        guard progressionEnabled(for: exercise.id) else { return }
         let sets = exercise.sets.filter { !$0.isBackOff }
         guard !sets.isEmpty, sets.allSatisfy({ $0.completed && $0.weight > 0 }) else { return }
-        let reachedTarget = sets.enumerated().allSatisfy { _, set in
+        let reachedTarget = sets.allSatisfy { set in
             let prescription = (repetitionMode == .perSet ? set.prescribedReps : nil) ?? exercise.targetReps
-            // Esempi validi: 8-10, 8–10, 10. Solo una soglia esplicita.
             let numbers = prescription.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
             guard let target = numbers.last, target > 0, target <= 100 else { return false }
             return (Int(set.reps) ?? 0) >= target
@@ -410,13 +429,19 @@ final class WorkoutStore: ObservableObject {
         let key = "gymapp.progression.last.\(exercise.id.uuidString)"
         guard UserDefaults.standard.double(forKey: key) != today else { return }
         UserDefaults.standard.set(today, forKey: key)
-        let increment = max(0.5, UserDefaults.standard.double(forKey: "gymapp.progressionIncrement"))
+        UserDefaults.standard.set(true, forKey: progressionPendingKey(exercise.id))
+        objectWillChange.send()
         let content = UNMutableNotificationContent()
-        content.title = "Progressione carico: \(exercise.name)"
-        content.body = "Hai raggiunto le ripetizioni previste in tutte le serie. Alla prossima seduta valuta +\(increment.formatted()) kg, mantenendo tecnica e controllo."
+        content.title = "Obiettivo raggiunto: \(exercise.name)"
+        content.body = "Alla prossima seduta valuta di aumentare il carico. Decidi tu quanto, senza sacrificare tecnica e controllo."
         content.sound = .default
         let request = UNNotificationRequest(identifier: "gymapp.progression.\(exercise.id.uuidString).\(Int(today))", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))
         UNUserNotificationCenter.current().add(request)
+    }
+
+    var widgetSharingAvailable: Bool { GymShared.defaults() != nil }
+    var widgetDiagnostics: String {
+        widgetSharingAvailable ? "App Group accessibile. Verifica i widget nella schermata Home." : "App Group non accessibile. Controlla la firma dell'IPA."
     }
 
     func refreshWidgets() { writeWidgetSnapshot(); WidgetCenter.shared.reloadAllTimelines() }

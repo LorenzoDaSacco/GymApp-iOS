@@ -110,8 +110,11 @@ struct DashboardView: View {
         ScrollView {
             VStack(spacing: 16) {
                 HStack {
-                    Text("GYM TRACKER PRO")
-                        .font(.system(size: 26, weight: .black))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("YOUR TRAINING").font(.caption.bold()).tracking(2.5).foregroundStyle(accentColor)
+                        Text("Train smarter.")
+                            .font(.system(size: 31, weight: .heavy, design: .rounded))
+                    }
                     Spacer()
                     Image(systemName: "dumbbell.fill")
                         .font(.title3)
@@ -119,11 +122,18 @@ struct DashboardView: View {
                         .background(accentColor.opacity(0.15), in: .circle)
                 }
 
-                Picker("Giorno", selection: $store.selectedDay) {
-                    ForEach(store.days, id: \.self) { Text($0) }
+                HStack {
+                    Label("Allenamento", systemImage: "calendar")
+                        .font(.subheadline.bold()).foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Giorno", selection: $store.selectedDay) {
+                        ForEach(store.days, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
+                    .tint(accentColor)
+                    .buttonStyle(.bordered)
                 }
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
 
                 HStack(spacing: 12) {
                     Metric(title: "Esercizi", value: "\(store.dayExercises.count)", icon: "figure.strengthtraining.traditional")
@@ -131,8 +141,19 @@ struct DashboardView: View {
                     Metric(title: "Completate", value: "\(store.completedSets)", icon: "checkmark.circle")
                 }
 
-                SwiftUI.ProgressView(value: store.totalSets == 0 ? 0 : Double(store.completedSets) / Double(store.totalSets))
-                    .tint(accentColor)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("LA TUA SESSIONE").font(.caption2.bold()).tracking(1.5)
+                        Spacer()
+                        Text("\(store.totalSets == 0 ? 0 : Int(Double(store.completedSets) * 100 / Double(store.totalSets)))%")
+                            .font(.subheadline.bold()).monospacedDigit()
+                    }
+                    SwiftUI.ProgressView(value: store.totalSets == 0 ? 0 : Double(store.completedSets) / Double(store.totalSets))
+                        .tint(accentColor)
+                        .scaleEffect(x: 1, y: 2, anchor: .center)
+                }
+                .padding(16)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
 
                 if store.dayExercises.isEmpty {
                     EmptyDayView()
@@ -202,9 +223,29 @@ struct ExerciseCard: View {
                 Spacer()
                 Button(editing ? "Fine" : "Modifica") {
                     if editing { commitTargetReps() }
-                    else { targetRepsDraft = exercise.targetReps }
+                    else {
+                        targetRepsDraft = exercise.targetReps
+                    }
                     editing.toggle()
                 }
+            }
+
+            if store.hasPendingProgression(for: exercise.id) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.up.forward.circle.fill")
+                        .font(.title2).foregroundStyle(accentColor)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Pronto per progredire?").font(.subheadline.bold())
+                        Text("Nella prossima seduta valuta un carico più alto. Scegli tu quanto, mantenendo la tecnica.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 2)
+                    Button { store.acknowledgeProgression(for: exercise.id) } label: {
+                        Image(systemName: "checkmark.circle.fill").font(.title3)
+                    }.accessibilityLabel("Ho valutato la progressione")
+                }
+                .padding(12)
+                .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
             }
 
             RecoveryTimerSection(store: store, exercise: exercise, editing: editing, accentColor: accentColor)
@@ -224,6 +265,24 @@ struct ExerciseCard: View {
                 .onChange(of: exercise.targetReps) { _, newValue in
                     if targetRepsDraft != newValue { targetRepsDraft = newValue }
                 }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle(isOn: Binding(
+                        get: { store.progressionEnabled(for: exercise.id) },
+                        set: { enabled in
+                            store.setProgressionEnabled(enabled, for: exercise.id)
+                            if enabled { RecoveryNotifications.shared.requestPermission() }
+                        }
+                    )) {
+                        Label("Ricordami di progredire", systemImage: "arrow.up.right")
+                            .font(.subheadline.bold())
+                    }
+                    .tint(accentColor)
+                    Text("Quando raggiungi l'obiettivo in tutte le serie, comparirà qui un avviso per la seduta successiva. Nessun incremento fisso: decidi tu di quanti kg salire.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .background(accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
 
                 Button(role: .destructive) { showingDeleteConfirmation = true } label: {
                     Label("Elimina esercizio", systemImage: "trash")
@@ -271,7 +330,7 @@ struct ExerciseCard: View {
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(accentColor.opacity(0.15)))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(accentColor.opacity(0.22), lineWidth: 1))
         .alert("Eliminare esercizio?", isPresented: $showingDeleteConfirmation) {
             Button("Elimina", role: .destructive) { store.remove(exercise) }
             Button("Annulla", role: .cancel) {}
@@ -870,8 +929,6 @@ struct SettingsView: View {
     @Binding var darkMode: Bool
     @Binding var accentColorName: String
     @AppStorage("gymapp.showMuscleMap") private var showMuscleMap = true
-    @AppStorage("gymapp.progressionReminders") private var progressionReminders = false
-    @AppStorage("gymapp.progressionIncrement") private var progressionIncrement = 2.5
 
     var body: some View {
         Form {
@@ -961,26 +1018,20 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Progressione dei carichi") {
-                Toggle("Ricordami quando aumentare il peso", isOn: $progressionReminders)
-                    .onChange(of: progressionReminders) { _, enabled in
-                        if enabled { RecoveryNotifications.shared.requestPermission() }
-                    }
-                if progressionReminders {
-                    Picker("Incremento suggerito", selection: $progressionIncrement) {
-                        Text("0,5 kg").tag(0.5)
-                        Text("1 kg").tag(1.0)
-                        Text("2,5 kg").tag(2.5)
-                        Text("5 kg").tag(5.0)
-                    }
-                    Text("Quando completi tutte le serie normali raggiungendo il limite superiore delle ripetizioni previste, ricevi un promemoria per valutare l'aumento nella prossima seduta. Non modifica i pesi automaticamente. Ignora il consiglio se tecnica e controllo peggiorano.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+            Section("Promemoria progressione") {
+                Label("La progressione si gestisce in ogni esercizio", systemImage: "arrow.up.forward")
+                Text("Apri Scheda → Modifica sull'esercizio → Ricordami di progredire. L'app ti avvisa quando hai raggiunto le ripetizioni previste, ma il nuovo carico lo scegli tu.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Widget") {
-                Button("Aggiorna i widget ora") { store.refreshWidgets() }
-                Text("Mostrano la scheda e i progressi del giorno reale. Per funzionare, app e widget devono essere firmati con lo stesso team e avere lo stesso App Group abilitato.")
+            Section("Widget e diagnostica") {
+                Label(store.widgetDiagnostics, systemImage: store.widgetSharingAvailable ? "checkmark.shield" : "exclamationmark.triangle")
+                    .font(.subheadline)
+                    .foregroundStyle(store.widgetSharingAvailable ? .green : .orange)
+                Button { store.refreshWidgets() } label: {
+                    Label("Sincronizza i widget", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Text("Se il contenitore condiviso non è disponibile, la causa è probabilmente la firma dell'IPA/App Group: SideStore non può correggerla dalla sola app. Non eliminare l'app per tentare la riparazione.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
