@@ -35,3 +35,16 @@
 - Test nativi Foundation sull'aggregazione in fasce, giorni, intervalli mancanti, limiti BPM e codifica/decodifica JSON.
 - Validazione Info.plist e struttura pbxproj.
 - **Non compilata con Xcode** e non testata su iPhone: è necessario il build GitHub Actions e il test sul dispositivo.
+
+
+## Revisione 1.2.1: ONAIR presente nel Bluetooth iPhone, ma non rilevato
+
+- Recupera i dispositivi cardiaci già collegati al sistema con `retrieveConnectedPeripherals(withServices: [180D])`: questi potrebbero non trasmettere annunci BLE durante una connessione.
+- Riconosce anche nomi che contengono `ONAIR`, ignorando maiuscole/minuscole e suffissi.
+- Elenca i dispositivi BLE rilevati e consente la scelta manuale dall'interfaccia Cuore. La scelta serve a verificare il servizio standard; il monitor non invia comandi proprietari.
+- Memorizza un identificativo iOS soltanto dopo aver verificato che il dispositivo espone `180D`.
+- Restano invariati Bundle ID, database allenamenti, formato storico cardiaco e dati degli esercizi.
+- Se il dispositivo è occupato da altre app: sospendere temporaneamente il permesso Bluetooth alle app Nilox e Heart Graph, lasciare attivo quello a GymApp, quindi usare «Cerca di nuovo il bracciale».
+- La lista mostra ID CoreBluetooth di iOS, non indirizzi MAC: non cercare per `FE:51:13:37:C5:FB` nel telefono.
+
+**Limite:** la compilazione iOS e il comportamento del collegamento sul dispositivo devono essere verificati tramite Xcode/GitHub Actions. Il metodo non garantisce campionamento 24/7 in background.

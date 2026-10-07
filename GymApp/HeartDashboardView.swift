@@ -114,6 +114,47 @@ struct HeartDashboardView: View {
                 Button("Cerca di nuovo il bracciale") { monitor.searchAgain() }
                     .font(.subheadline.bold())
                     .foregroundStyle(.white)
+
+                if !monitor.detectedDevices.isEmpty {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("Dispositivi Bluetooth trovati")
+                            .font(.caption.bold())
+                            .foregroundStyle(.white.opacity(0.88))
+                        Text("Se ONAIR non viene riconosciuto automaticamente, selezionalo qui. Il codice sotto al nome è un ID iOS, non il MAC del bracciale.")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.72))
+                        ForEach(Array(monitor.detectedDevices.prefix(10))) { item in
+                            Button {
+                                monitor.selectDevice(item.id)
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: item.advertisesHeartRate ? "heart.fill" : "antenna.radiowaves.left.and.right")
+                                        .frame(width: 20)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.name)
+                                            .font(.subheadline.weight(.semibold))
+                                            .lineLimit(1)
+                                        Text(item.alreadyConnected ? "Già collegato a iOS · tocca per usare" :
+                                             (item.advertisesHeartRate ? "Sensore cardiaco BLE" : "Dispositivo BLE"))
+                                            .font(.caption2)
+                                            .foregroundStyle(.white.opacity(0.68))
+                                    }
+                                    Spacer(minLength: 4)
+                                    if let rssi = item.rssi {
+                                        Text("\(rssi) dBm")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(.white.opacity(0.7))
+                                    }
+                                    Image(systemName: "chevron.right").font(.caption.bold())
+                                }
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
             }
             if monitor.enabled && monitor.connection == .listening && !lastValueIsFresh {
                 Text("Nessuna lettura recente: il Bluetooth è collegato, ma il Nilox non sta inviando battiti.")

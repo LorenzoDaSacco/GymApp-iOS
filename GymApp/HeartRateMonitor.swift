@@ -6,6 +6,15 @@ import CoreBluetooth
 /// Uses Core Bluetooth restoration and bluetooth-central background mode.
 /// iOS can still interrupt delivery; intervals with no reading remain empty.
 final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+    /// A Core Bluetooth identifier is specific to iOS, not the hardware MAC seen on Windows.
+    struct DeviceOption: Identifiable, Equatable {
+        let id: UUID
+        let name: String
+        let rssi: Int?
+        let advertisesHeartRate: Bool
+        let alreadyConnected: Bool
+    }
+
     enum Connection: Equatable {
         case disabled, bluetoothOff, permissionDenied, searching, connecting, listening, notFound, interrupted, failed
         var title: String {
@@ -29,6 +38,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     @Published private(set) var latestReadingAt: Date?
     @Published private(set) var buckets: [HeartRateBucket] = []
     @Published private(set) var storageError: String?
+    @Published private(set) var detectedDevices: [DeviceOption] = []
 
     private static let enabledKey = "gymapp.heart.enabled.v1"
     private static let peripheralKey = "gymapp.heart.peripheralUUID.v1"
@@ -38,6 +48,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
+    private var scannedPeripherals: [UUID: CBPeripheral] = [:]
     private var scanSequence = 0
     private var lastDiskWrite = Date.distantPast
 
@@ -80,6 +91,20 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         peripheral = nil
         UserDefaults.standard.removeObject(forKey: Self.peripheralKey)
         connectIfPossible()
+    }
+
+    /// Used when the band does not advertise the exact local name ONAIR.
+    /// Never writes to the selected device: only discovers the standard heart-rate service.
+    func selectDevice(_ identifier: UUID) {
+        guard enabled, central.state == .poweredOn,
+              let selected = scannedPeripherals[identifier] else { return }
+        stopScanning()
+        if let peripheral, peripheral.identifier != selected.identifier {
+            central.cancelPeripheralConnection(peripheral)
+        }
+        attach(selected)
+        connection = .connecting
+        central.connect(selected, options: nil)
     }
 
     func saveHistory() {
@@ -142,15 +167,64 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     private func attach(_ device: CBPeripheral) {
         peripheral = device
         device.delegate = self
-        UserDefaults.standard.set(device.identifier.uuidString, forKey: Self.peripheralKey)
+        // Remember only after the standard heart-rate service is actually verified.
+    }
+
+    private func recordCandidate(_ device: CBPeripheral, advertisedName: String?,
+                                 rssi: Int?, advertisesHeartRate: Bool = false,
+                                 alreadyConnected: Bool = false) {
+        scannedPeripherals[device.identifier] = device
+        let name = [advertisedName, device.name]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+            ?? "Senza nome · \(device.identifier.uuidString.suffix(6))"
+        let entry = DeviceOption(id: device.identifier, name: name, rssi: rssi,
+                                 advertisesHeartRate: advertisesHeartRate,
+                                 alreadyConnected: alreadyConnected)
+        if let index = detectedDevices.firstIndex(where: { $0.id == entry.id }) {
+            // Preserve signal/service info if a later advertisement is less informative.
+            let previous = detectedDevices[index]
+            detectedDevices[index] = DeviceOption(
+                id: entry.id, name: entry.name,
+                rssi: entry.rssi ?? previous.rssi,
+                advertisesHeartRate: entry.advertisesHeartRate || previous.advertisesHeartRate,
+                alreadyConnected: entry.alreadyConnected || previous.alreadyConnected)
+        } else {
+            detectedDevices.append(entry)
+        }
+        detectedDevices.sort {
+            let l = $0.name.localizedCaseInsensitiveContains("ONAIR") ? 1 : 0
+            let r = $1.name.localizedCaseInsensitiveContains("ONAIR") ? 1 : 0
+            if l != r { return l > r }
+            if $0.advertisesHeartRate != $1.advertisesHeartRate { return $0.advertisesHeartRate }
+            return ($0.rssi ?? -110) > ($1.rssi ?? -110)
+        }
+        if detectedDevices.count > 25 {
+            detectedDevices = Array(detectedDevices.prefix(25))
+        }
     }
 
     private func startScanning() {
         guard enabled, central.state == .poweredOn else { return }
         stopScanning()
         connection = .searching
+        detectedDevices = []
+        scannedPeripherals = [:]
         scanSequence += 1
         let thisScan = scanSequence
+        // iOS can already have a GATT connection to ONAIR through another app.
+        // In that case it may stop advertising and never appear in a BLE scan.
+        // retrieveConnectedPeripherals finds *system-connected* heart-rate peripherals.
+        for device in central.retrieveConnectedPeripherals(withServices: [Self.serviceID]) {
+            recordCandidate(device, advertisedName: nil, rssi: nil,
+                            advertisesHeartRate: true, alreadyConnected: true)
+            if (device.name ?? "").localizedCaseInsensitiveContains("ONAIR") {
+                attach(device)
+                connection = .connecting
+                central.connect(device, options: nil)
+                return
+            }
+        }
         // This device may not advertise 180D. Scan without a filter while app is open.
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
         DispatchQueue.main.asyncAfter(deadline: .now() + 40) { [weak self] in
@@ -189,8 +263,12 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         guard enabled else { return }
         let advertisedName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? device.name ?? ""
+        let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        recordCandidate(device, advertisedName: advertisedName, rssi: RSSI.intValue,
+                        advertisesHeartRate: services.contains(Self.serviceID))
         let knownUUID = UserDefaults.standard.string(forKey: Self.peripheralKey)
-        guard advertisedName.uppercased() == "ONAIR" || device.identifier.uuidString == knownUUID else { return }
+        guard advertisedName.localizedCaseInsensitiveContains("ONAIR") ||
+                device.identifier.uuidString == knownUUID else { return }
         stopScanning()
         attach(device)
         connection = .connecting
@@ -207,6 +285,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     func centralManager(_ central: CBCentralManager, didFailToConnect device: CBPeripheral, error: Error?) {
         guard enabled else { return }
         connection = .failed
+        // A stale device can be recovered with the explicit "Search again" action.
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral device: CBPeripheral,
@@ -223,6 +302,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
             connection = .failed
             return
         }
+        UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.peripheralKey)
         peripheral.discoverCharacteristics([Self.measurementID], for: service)
     }
 
