@@ -867,6 +867,23 @@ struct AddExerciseView: View {
             }
             Section("Esercizio") {
                 TextField("Nome", text: $name).focused($field)
+                if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let matches = ExerciseCatalog.search(name)
+                    if !matches.isEmpty {
+                        ForEach(matches.prefix(8)) { item in
+                            Button {
+                                name = item.name_it
+                                field = false
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.name_it)
+                                    Text(item.primary_muscles.joined(separator: ", ") + " · " + item.equipment.joined(separator: ", "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
                 if store.repetitionMode == .general {
                     TextField("Ripetizioni generali (es. 8-10)", text: $reps)
                 } else {
@@ -924,6 +941,120 @@ struct AddExerciseView: View {
             ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Fine") { field = false } }
         }
         .navigationTitle("Aggiungi esercizio")
+    }
+}
+
+// MARK: - ALLENAMENTO MONITORATO
+struct WorkoutHeartReading: Codable, Identifiable {
+    var id = UUID()
+    let at: Date
+    let bpm: Int
+}
+
+struct MonitoredWorkoutRecord: Codable, Identifiable {
+    var id = UUID()
+    let startedAt: Date
+    let endedAt: Date
+    let bodyWeight: Double
+    let completedExerciseNames: [String]
+    let readings: [WorkoutHeartReading]
+    let estimatedActiveCalories: Double
+}
+
+@MainActor
+final class MonitoredWorkoutStore: ObservableObject {
+    @Published var records: [MonitoredWorkoutRecord] = []
+    private let key = "gymapp.monitored.workouts.v1"
+    init() { if let data = UserDefaults.standard.data(forKey: key),
+              let saved = try? JSONDecoder().decode([MonitoredWorkoutRecord].self, from: data) { records = saved } }
+    func add(_ record: MonitoredWorkoutRecord) {
+        records.insert(record, at: 0)
+        if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: key) }
+    }
+}
+
+struct MonitoredWorkoutView: View {
+    @ObservedObject var store: WorkoutStore
+    @EnvironmentObject private var monitor: HeartRateMonitor
+    @AppStorage("gymapp.bodyWeight") private var bodyWeight = 108.0
+    @StateObject private var history = MonitoredWorkoutStore()
+    @State private var pending: [UUID] = []
+    @State private var completed: [UUID] = []
+    @State private var active = false
+    @State private var startedAt = Date()
+    @State private var now = Date()
+    @State private var activeSeconds: TimeInterval = 0
+    @State private var exerciseStartedAt: Date?
+    @State private var message = ""
+
+    private var current: Exercise? { pending.first.flatMap { id in store.exercises.first { $0.id == id } } }
+    private var elapsed: TimeInterval { active ? now.timeIntervalSince(startedAt) : 0 }
+    // Conservative activity estimate: 3.5 MET while performing resistance exercise;
+    // active kcal exclude approximately 1 MET resting expenditure.
+    private var kcal: Double { max(0, activeSeconds) / 3600 * max(20, bodyWeight) * 2.5 * 1.05 }
+
+    var body: some View {
+        Form {
+            Section("Profilo") {
+                HStack { Text("Peso corporeo (kg)"); Spacer(); TextField("kg", value: $bodyWeight, format: .number.precision(.fractionLength(1)))
+                    .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 85) }
+                Text("Le calorie sono stime MET, non misurazioni dirette. Il peso dei manubri non equivale al peso corporeo.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Sessione") {
+                if active {
+                    Text("Durata: \(Int(elapsed / 60)) min · Attività stimata: \(Int(activeSeconds)) s")
+                    Text("Calorie attive stimate: \(Int(kcal)) kcal")
+                    Text("BPM attuale: \(monitor.latestBPM.map(String.init) ?? "—")")
+                    Text("Campioni cardiaci: \(monitor.workoutReadings.count)")
+                    if !monitor.workoutReadings.isEmpty {
+                        Chart(monitor.workoutReadings) { sample in
+                            LineMark(x: .value("Ora", sample.at), y: .value("BPM", sample.bpm))
+                        }.frame(height: 160)
+                    }
+                    if let exercise = current {
+                        Text(exercise.name).font(.headline)
+                        Text("\(exercise.sets.count) serie · \(exercise.targetReps) ripetizioni")
+                        HStack {
+                            Button(exerciseStartedAt == nil ? "Avvia esercizio" : "Completa esercizio") {
+                                if let start = exerciseStartedAt { activeSeconds += Date().timeIntervalSince(start); exerciseStartedAt = nil; completed.append(exercise.id); pending.removeFirst() }
+                                else { exerciseStartedAt = Date() }
+                            }.buttonStyle(.borderedProminent)
+                            Button("Salta") { if !pending.isEmpty { pending.append(pending.removeFirst()); exerciseStartedAt = nil } }
+                                .disabled(exerciseStartedAt != nil || pending.count < 2)
+                        }
+                    } else { Text("Tutti gli esercizi completati.") }
+                    Button("Termina e salva sessione") { finish() }.foregroundStyle(.red)
+                } else {
+                    Button("Avvia allenamento monitorato") { begin() }
+                    if !message.isEmpty { Text(message).font(.caption) }
+                }
+            }
+            Section("Storico") {
+                ForEach(history.records) { record in
+                    VStack(alignment: .leading) {
+                        Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
+                        Text("\(record.completedExerciseNames.count) esercizi · ~\(Int(record.estimatedActiveCalories)) kcal attive · \(record.readings.count) BPM")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Allenamento monitorato")
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
+    }
+    private func begin() {
+        pending = store.dayExercises.map(\.id); completed = []; activeSeconds = 0
+        exerciseStartedAt = nil; startedAt = Date(); active = true; message = ""
+        monitor.beginWorkoutRecording()
+    }
+    private func finish() {
+        if let start = exerciseStartedAt { activeSeconds += Date().timeIntervalSince(start) }
+        let readings = monitor.endWorkoutRecording()
+        let names = completed.compactMap { id in store.exercises.first { $0.id == id }?.name }
+        history.add(MonitoredWorkoutRecord(startedAt: startedAt, endedAt: Date(), bodyWeight: bodyWeight,
+                                         completedExerciseNames: names, readings: readings, estimatedActiveCalories: kcal))
+        active = false; exerciseStartedAt = nil; message = "Sessione salvata"
     }
 }
 
@@ -1038,6 +1169,14 @@ struct SettingsView: View {
                     Label("Sincronizza i widget", systemImage: "arrow.triangle.2.circlepath")
                 }
                 Text("Se il contenitore condiviso non è disponibile, la causa è probabilmente la firma dell'IPA/App Group: SideStore non può correggerla dalla sola app. Non eliminare l'app per tentare la riparazione.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Allenamento monitorato") {
+                NavigationLink("Avvia allenamento e calcolo calorie") {
+                    MonitoredWorkoutView(store: store)
+                }
+                Text("Registra i BPM ricevuti dal Nilox, il grafico e le calorie attive stimate per la sessione.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
