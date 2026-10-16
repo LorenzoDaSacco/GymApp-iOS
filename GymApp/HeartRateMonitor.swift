@@ -43,18 +43,64 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     @Published private(set) var workoutReadings: [WorkoutHeartReading] = []
     @Published private(set) var workoutRecording = false
     private var workoutStartedAt: Date?
+    @Published private(set) var liveStatus = "In attesa del sensore"
+    private var measurementCharacteristic: CBCharacteristic?
+    private var watchdogGeneration = 0
+    private var recoveryAttempts = 0
+    private var lastWorkoutBPMAt: Date?
+
 
     func beginWorkoutRecording() {
         workoutReadings = []
         workoutStartedAt = Date()
         workoutRecording = true
-        if !enabled { start() }
+        lastWorkoutBPMAt = nil
+        recoveryAttempts = 0
+        liveStatus = "Connessione e ricezione BPM in corso…"
+        if !enabled { start() } else { connectIfPossible() }
+        startWorkoutWatchdog()
     }
 
     func endWorkoutRecording() -> [WorkoutHeartReading] {
         workoutRecording = false
+        watchdogGeneration += 1
         workoutStartedAt = nil
         return workoutReadings
+    }
+
+    /// Ripristina le notifiche GATT se la connessione resta silenziosa.
+    /// Non sostituisce un eventuale comando proprietario per accendere il sensore.
+    private func startWorkoutWatchdog() {
+        watchdogGeneration += 1
+        let generation = watchdogGeneration
+        scheduleWorkoutCheck(generation)
+    }
+
+    private func scheduleWorkoutCheck(_ generation: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self, self.workoutRecording, self.watchdogGeneration == generation else { return }
+            let fresh = self.lastWorkoutBPMAt.map { Date().timeIntervalSince($0) < 15 } ?? false
+            if fresh {
+                self.liveStatus = "BPM ricevuti dal bracciale"
+            } else if self.connection == .listening {
+                self.liveStatus = "ONAIR connesso, ma non invia battiti. Riprovo la ricezione…"
+                if self.recoveryAttempts < 3, let device = self.peripheral,
+                   device.state == .connected, let characteristic = self.measurementCharacteristic {
+                    self.recoveryAttempts += 1
+                    device.setNotifyValue(false, for: characteristic)
+                    // La riattivazione viene completata nel callback didUpdateNotificationStateFor.
+                } else if self.recoveryAttempts >= 3 {
+                    self.liveStatus = "ONAIR connesso ma senza BPM: probabile avvio sensore richiesto dall'app ufficiale"
+                }
+            } else {
+                self.liveStatus = "ONAIR non ancora pronto: " + self.connection.title
+                if self.recoveryAttempts < 3 {
+                    self.recoveryAttempts += 1
+                    self.connectIfPossible()
+                }
+            }
+            self.scheduleWorkoutCheck(generation)
+        }
     }
 
     private static let enabledKey = "gymapp.heart.enabled.v1"
@@ -96,6 +142,8 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         stopScanning()
         if let peripheral { central.cancelPeripheralConnection(peripheral) }
         peripheral = nil
+        measurementCharacteristic = nil
+        watchdogGeneration += 1
         connection = .disabled
         saveHistory()
     }
@@ -182,6 +230,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     }
 
     private func attach(_ device: CBPeripheral) {
+        if peripheral?.identifier != device.identifier { measurementCharacteristic = nil }
         peripheral = device
         device.delegate = self
         // Remember only after the standard heart-rate service is actually verified.
@@ -331,11 +380,16 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
             connection = .failed
             return
         }
+        measurementCharacteristic = char
         peripheral.setNotifyValue(true, for: char)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         guard enabled, characteristic.uuid == Self.measurementID else { return }
+        if error == nil && !characteristic.isNotifying && workoutRecording {
+            peripheral.setNotifyValue(true, for: characteristic)
+            return
+        }
         connection = error == nil && characteristic.isNotifying ? .listening : .failed
     }
 
@@ -350,6 +404,11 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         let now = Date()
         latestBPM = bpm
         latestReadingAt = now
+        if workoutRecording {
+            lastWorkoutBPMAt = now
+            liveStatus = "BPM ricevuti dal bracciale"
+            recoveryAttempts = 0
+        }
         if workoutRecording {
             workoutReadings.append(WorkoutHeartReading(at: now, bpm: bpm))
         }
