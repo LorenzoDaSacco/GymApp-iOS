@@ -42,17 +42,33 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
 
     @Published private(set) var workoutReadings: [WorkoutHeartReading] = []
     @Published private(set) var workoutRecording = false
+    @Published private(set) var workoutDiagnostic: String = "Sensore non ancora verificato"
+    private var workoutStartSequence = 0
     private var workoutStartedAt: Date?
 
     func beginWorkoutRecording() {
         workoutReadings = []
         workoutStartedAt = Date()
         workoutRecording = true
+        workoutDiagnostic = "Connessione al bracciale in corso…"
         if !enabled { start() }
+        else { connectIfPossible() }
+        workoutStartSequence += 1
+        let sequence = workoutStartSequence
+        // A BLE subscription alone cannot command a proprietary band to start measuring.
+        // Surface this explicitly instead of showing an apparently valid 0 BPM.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self, self.workoutRecording, self.workoutStartSequence == sequence,
+                  self.workoutReadings.isEmpty else { return }
+            self.workoutDiagnostic = self.connection == .listening
+                ? "ONAIR connesso, ma non trasmette BPM. Potrebbe richiedere un comando proprietario di avvio misurazione."
+                : "ONAIR non sta inviando BPM. Controlla connessione Bluetooth e permessi."
+        }
     }
 
     func endWorkoutRecording() -> [WorkoutHeartReading] {
         workoutRecording = false
+        workoutStartSequence += 1
         workoutStartedAt = nil
         return workoutReadings
     }
@@ -351,6 +367,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         latestBPM = bpm
         latestReadingAt = now
         if workoutRecording {
+            workoutDiagnostic = "BPM ricevuti correttamente da ONAIR"
             workoutReadings.append(WorkoutHeartReading(at: now, bpm: bpm))
         }
         let previousSlot = buckets.last?.slotStart

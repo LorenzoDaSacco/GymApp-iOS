@@ -1068,6 +1068,11 @@ struct MonitoredWorkoutView: View {
                         monitorMetric("Recupero", TimeInterval(remainingRecovery).formattedDuration, "timer")
                     }
 
+                    if monitor.workoutReadings.isEmpty {
+                        Text(monitor.workoutDiagnostic)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if session.pausedAt != nil {
                         Button { resume() } label: {
                             Label("Riprendi allenamento", systemImage: "play.fill")
