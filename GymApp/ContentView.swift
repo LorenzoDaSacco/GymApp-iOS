@@ -1005,6 +1005,7 @@ private struct ActiveMonitoredSession: Codable {
 
 struct MonitoredWorkoutView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @EnvironmentObject private var monitor: HeartRateMonitor
     @AppStorage("gymapp.bodyWeight") private var bodyWeight = 108.0
@@ -1045,83 +1046,167 @@ struct MonitoredWorkoutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let session {
-                    HStack {
-                        Label(session.pausedAt == nil ? "Allenamento attivo" : "In pausa",
-                              systemImage: session.pausedAt == nil ? "circle.fill" : "pause.circle")
-                            .font(.subheadline.bold())
+                    HStack(spacing: 10) {
+                        Image(systemName: session.pausedAt == nil ? "waveform.path.ecg" : "pause.circle.fill")
+                            .foregroundStyle(accentColor)
+                        Text(session.pausedAt == nil ? "ALLENAMENTO ATTIVO" : "ALLENAMENTO IN PAUSA")
+                            .font(.caption.bold()).tracking(1.3)
                         Spacer()
-                        Text(duration.formattedDuration).monospacedDigit().foregroundStyle(.secondary)
+                        Text(duration.formattedDuration).font(.headline.monospacedDigit())
                     }
-                    HStack(spacing: 8) {
-                        metric("Battiti", "\(monitor.latestBPM.map(String.init) ?? "—")", "heart.fill")
-                            .onTapGesture { showHeart = true }
-                        metric("Calorie", "\(Int(kcal))", "flame.fill")
-                        metric("Recupero", TimeInterval(remainingRecovery).formattedDuration, "timer")
+                    .padding(16)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+
+                    HStack(spacing: 10) {
+                        Button { showHeart = true } label: {
+                            monitorMetric("Battiti", monitor.latestBPM.map(String.init) ?? "—", "heart.fill")
+                        }
+                        .buttonStyle(.plain)
+                        monitorMetric("Calorie", "\(Int(kcal))", "flame.fill")
+                        monitorMetric("Recupero", TimeInterval(remainingRecovery).formattedDuration, "timer")
                     }
+
                     if session.pausedAt != nil {
-                        Button("Riprendi allenamento") { resume() }.buttonStyle(.borderedProminent)
+                        Button { resume() } label: {
+                            Label("Riprendi allenamento", systemImage: "play.fill")
+                                .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 10)
+                        }
+                        .buttonStyle(.borderedProminent)
                     } else if let exercise = current {
-                        Text("Esercizio \(session.currentIndex + 1) di \(session.orderedIDs.count)")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text(exercise.name).font(.largeTitle.bold())
-                        Text("Serie completate: \(exercise.sets.filter(\.completed).count) / \(exercise.sets.count)")
-                            .foregroundStyle(.secondary)
-                        if let set = nextSet {
-                            HStack(spacing: 12) {
-                                VStack(alignment: .leading) {
-                                    Text("Peso (kg)").font(.caption)
-                                    TextField("kg", text: $weightDraft).keyboardType(.decimalPad)
-                                        .textFieldStyle(.roundedBorder)
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack {
+                                Text("ESERCIZIO \(session.currentIndex + 1) DI \(session.orderedIDs.count)")
+                                    .font(.caption2.bold()).tracking(1.4).foregroundStyle(accentColor)
+                                Spacer()
+                                Text(exercise.target.title.uppercased())
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .background(accentColor.opacity(0.14), in: Capsule())
+                            }
+                            Text(exercise.name)
+                                .font(.system(size: 27, weight: .bold, design: .rounded))
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                Text("Serie completate")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(exercise.sets.filter(\.completed).count) / \(exercise.sets.count)")
+                                    .fontWeight(.bold)
+                            }
+                            .font(.subheadline)
+                            ProgressView(value: Double(exercise.sets.filter(\.completed).count),
+                                         total: Double(max(1, exercise.sets.count)))
+                                .tint(accentColor)
+                            if let set = nextSet {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        Text("PESO (KG)").font(.caption2.bold()).foregroundStyle(.secondary)
+                                        TextField("kg", text: $weightDraft)
+                                            .keyboardType(.decimalPad)
+                                            .font(.title3.bold())
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        Text("RIPETIZIONI").font(.caption2.bold()).foregroundStyle(.secondary)
+                                        TextField("Reps", text: $repsDraft)
+                                            .keyboardType(.numberPad)
+                                            .font(.title3.bold())
+                                            .textFieldStyle(.roundedBorder)
+                                    }
                                 }
-                                VStack(alignment: .leading) {
-                                    Text("Ripetizioni").font(.caption)
-                                    TextField("Reps", text: $repsDraft).keyboardType(.numberPad)
-                                        .textFieldStyle(.roundedBorder)
+                                Button { complete(set: set, exercise: exercise) } label: {
+                                    Label("Completa serie", systemImage: "checkmark.circle.fill")
+                                        .font(.headline)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                }
+                                .buttonStyle(.borderedProminent)
+                            } else {
+                                Button("Prossimo esercizio") { advance() }
+                                    .buttonStyle(.borderedProminent)
+                            }
+                            HStack(spacing: 12) {
+                                Button { skip() } label: {
+                                    Label("Salta", systemImage: "forward.end")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .disabled(session.orderedIDs.count < 2)
+                                Button { showList = true } label: {
+                                    Label("Esercizi", systemImage: "list.bullet")
+                                        .frame(maxWidth: .infinity)
                                 }
                             }
-                            Button("Completa serie") { complete(set: set, exercise: exercise) }
-                                .buttonStyle(.borderedProminent)
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Button("Prossimo esercizio") { advance() }.buttonStyle(.borderedProminent)
+                            .buttonStyle(.bordered)
                         }
-                        HStack {
-                            Button("Salta esercizio") { skip() }.disabled(session.orderedIDs.count < 2)
-                            Spacer()
-                            Button("Tutti gli esercizi") { showList = true }
-                        }.buttonStyle(.bordered)
+                        .padding(18)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+                        .overlay(RoundedRectangle(cornerRadius: 24)
+                            .stroke(accentColor.opacity(0.22), lineWidth: 1))
                     } else {
-                        Text("Tutti gli esercizi completati.").font(.headline)
+                        Label("Tutti gli esercizi completati", systemImage: "checkmark.seal.fill")
+                            .font(.headline).foregroundStyle(accentColor)
+                            .padding()
                     }
-                    Button("Pausa ed esci") { pause(); dismiss() }
+
+                    HStack(spacing: 12) {
+                        Button { pause(); dismiss() } label: {
+                            Label("Pausa ed esci", systemImage: "pause.fill")
+                        }
                         .buttonStyle(.bordered)
-                    Button("Termina e salva") { finish() }
-                        .foregroundStyle(.red)
-                } else {
-                    Text("Allenamento monitorato").font(.largeTitle.bold())
-                    HStack {
-                        Text("Peso corporeo (kg)")
                         Spacer()
-                        TextField("kg", value: $bodyWeight, format: .number)
-                            .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 90)
+                        Button("Termina e salva") { finish() }
+                            .foregroundStyle(accentColor)
                     }
-                    Text("La scheda esistente determina esercizi, serie, ripetizioni e carichi.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Button("Avvia allenamento") { begin() }
+                } else {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("YOUR TRAINING")
+                            .font(.caption.bold()).tracking(2.5).foregroundStyle(accentColor)
+                        Text("Allenamento monitorato")
+                            .font(.system(size: 29, weight: .heavy, design: .rounded))
+                        HStack {
+                            Text("Peso corporeo (kg)")
+                            Spacer()
+                            TextField("kg", value: $bodyWeight, format: .number)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 90)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Text("Usa gli esercizi, le serie e i carichi della tua scheda.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button { begin() } label: {
+                            Label("Avvia allenamento", systemImage: "play.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        }
                         .buttonStyle(.borderedProminent)
                         .disabled(store.dayExercises.isEmpty)
-                    if !message.isEmpty { Text(message).font(.caption) }
+                        if !message.isEmpty { Text(message).font(.caption) }
+                    }
+                    .padding(18)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
                 }
                 if !history.records.isEmpty {
-                    Divider()
-                    Text("Storico").font(.headline)
-                    ForEach(history.records.prefix(10)) { record in
-                        VStack(alignment: .leading) {
-                            Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
-                            Text("\(record.completedExerciseNames.count) esercizi · circa \(Int(record.estimatedActiveCalories)) kcal attive")
-                                .font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("STORICO ALLENAMENTI")
+                            .font(.caption.bold()).tracking(1.4).foregroundStyle(accentColor)
+                        ForEach(history.records.prefix(10)) { record in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.subheadline.bold())
+                                    Text("\(record.completedExerciseNames.count) esercizi · circa \(Int(record.estimatedActiveCalories)) kcal attive")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "checkmark.circle")
+                                    .foregroundStyle(accentColor)
+                            }
+                            Divider()
                         }
                     }
+                    .padding(18)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
                 }
             }
             .padding()
@@ -1142,6 +1227,7 @@ struct MonitoredWorkoutView: View {
                     } else {
                         Chart(monitor.workoutReadings) { sample in
                             LineMark(x: .value("Ora", sample.at), y: .value("BPM", sample.bpm))
+                                .foregroundStyle(accentColor)
                         }.frame(height: 260).padding()
                     }
                     Spacer()
@@ -1181,14 +1267,17 @@ struct MonitoredWorkoutView: View {
         .onChange(of: current?.id) { _, _ in loadDraft() }
     }
 
-    private func metric(_ title: String, _ value: String, _ icon: String) -> some View {
-        VStack(spacing: 5) {
-            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3.bold()).monospacedDigit()
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+    private func monitorMetric(_ title: String, _ value: String, _ icon: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: icon).font(.subheadline).foregroundStyle(accentColor)
+            Text(value).font(.title2.bold()).monospacedDigit().foregroundStyle(.primary)
+            Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity).padding(.vertical, 14)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20)
+            .stroke(accentColor.opacity(0.17), lineWidth: 1))
     }
     private func persistSession() {
         if let session, let data = try? JSONEncoder().encode(session) {
