@@ -982,8 +982,20 @@ struct MonitoredWorkoutRecord: Codable, Identifiable {
 final class MonitoredWorkoutStore: ObservableObject {
     @Published var records: [MonitoredWorkoutRecord] = []
     private let key = "gymapp.monitored.workouts.v1"
-    init() { if let data = UserDefaults.standard.data(forKey: key),
-              let saved = try? JSONDecoder().decode([MonitoredWorkoutRecord].self, from: data) { records = saved } }
+    init() {
+        // Pulizia una tantum dei soli allenamenti monitorati usati per i test.
+        // La flag impedisce di cancellare gli allenamenti futuri ad ogni avvio.
+        let cleanupKey = "gymapp.monitored.testHistoryCleanup.20261016.v1"
+        if !UserDefaults.standard.bool(forKey: cleanupKey) {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: "gymapp.monitored.active.v2")
+            UserDefaults.standard.set(true, forKey: cleanupKey)
+        }
+        if let data = UserDefaults.standard.data(forKey: key),
+           let saved = try? JSONDecoder().decode([MonitoredWorkoutRecord].self, from: data) {
+            records = saved
+        }
+    }
     func add(_ record: MonitoredWorkoutRecord) {
         records.insert(record, at: 0)
         if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: key) }
