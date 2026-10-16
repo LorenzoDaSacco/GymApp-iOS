@@ -996,6 +996,8 @@ private struct ActiveMonitoredSession: Codable {
     var orderedIDs: [UUID]
     var currentIndex: Int
     var completedIDs: [UUID]
+    // Optional per leggere anche sessioni salvate prima di questo aggiornamento.
+    var skippedIDs: [UUID]?
     var bodyWeight: Double
     var activeSeconds: TimeInterval
     var exerciseStartedAt: Date?
@@ -1298,7 +1300,7 @@ struct MonitoredWorkoutView: View {
         guard !store.dayExercises.isEmpty else { return }
         session = ActiveMonitoredSession(startedAt: Date(), day: store.selectedDay,
             orderedIDs: store.dayExercises.map(\.id), currentIndex: 0,
-            completedIDs: [], bodyWeight: max(20, bodyWeight), activeSeconds: 0,
+            completedIDs: [], skippedIDs: [], bodyWeight: max(20, bodyWeight), activeSeconds: 0,
             exerciseStartedAt: Date(), recoveryUntil: nil, pausedAt: nil)
         monitor.beginWorkoutRecording()
         loadDraft()
@@ -1358,24 +1360,67 @@ struct MonitoredWorkoutView: View {
         loadDraft()
         persistSession()
     }
-    private func skip() {
-        guard let s = session else { return }
-        let count = s.orderedIDs.count
-        if let next = (1..<count).map({ (s.currentIndex + $0) % count }).first(where: { index in
-            guard let exercise = store.exercises.first(where: { $0.id == s.orderedIDs[index] }) else { return false }
-            return exercise.sets.contains(where: { !$0.completed })
-        }) { switchTo(next) }
+    // Un esercizio saltato resta in attesa. Quando completi l'esercizio
+    // successivo, torna prima quello saltato, non il prossimo della scheda.
+    private func isIncomplete(_ id: UUID) -> Bool {
+        guard let exercise = store.exercises.first(where: { $0.id == id }) else { return false }
+        return exercise.sets.contains(where: { !$0.completed })
     }
+
+    private func skip() {
+        guard var s = session,
+              s.orderedIDs.indices.contains(s.currentIndex) else { return }
+        let currentID = s.orderedIDs[s.currentIndex]
+        var queue = s.skippedIDs ?? []
+        if isIncomplete(currentID) && !queue.contains(currentID) {
+            queue.append(currentID)
+        }
+        s.skippedIDs = queue
+        session = s
+
+        // Preferisci un esercizio successivo mai saltato.
+        let later = ((s.currentIndex + 1)..<s.orderedIDs.count).first {
+            isIncomplete(s.orderedIDs[$0]) && !queue.contains(s.orderedIDs[$0])
+        }
+        let earlier = (0..<s.currentIndex).first {
+            isIncomplete(s.orderedIDs[$0]) && !queue.contains(s.orderedIDs[$0])
+        }
+        if let next = later ?? earlier {
+            switchTo(next)
+        } else if let queued = queue.first(where: { $0 != currentID && isIncomplete($0) }),
+                  let index = s.orderedIDs.firstIndex(of: queued) {
+            switchTo(index)
+        } else {
+            persistSession()
+        }
+    }
+
     private func advance() {
-        guard let s = session else { return }
-        let count = s.orderedIDs.count
-        if let next = (1..<count).map({ (s.currentIndex + $0) % count }).first(where: { index in
-            guard let exercise = store.exercises.first(where: { $0.id == s.orderedIDs[index] }) else { return false }
-            return exercise.sets.contains(where: { !$0.completed })
-        }) { switchTo(next) }
-        else if var updated = session {
-            updated.currentIndex = count
-            session = updated
+        guard var s = session else { return }
+        let currentID = s.orderedIDs.indices.contains(s.currentIndex)
+            ? s.orderedIDs[s.currentIndex] : nil
+        // Se l'esercizio appena svolto era stato saltato, rimuovilo dalla coda.
+        s.skippedIDs = (s.skippedIDs ?? []).filter { isIncomplete($0) && $0 != currentID }
+        session = s
+
+        // Gli esercizi saltati hanno precedenza sul resto della scheda (ordine FIFO).
+        if let queued = s.skippedIDs?.first,
+           let index = s.orderedIDs.firstIndex(of: queued) {
+            switchTo(index)
+            return
+        }
+
+        let later = ((min(s.currentIndex + 1, s.orderedIDs.count))..<s.orderedIDs.count).first {
+            isIncomplete(s.orderedIDs[$0])
+        }
+        let earlier = (0..<min(s.currentIndex, s.orderedIDs.count)).first {
+            isIncomplete(s.orderedIDs[$0])
+        }
+        if let next = later ?? earlier {
+            switchTo(next)
+        } else {
+            s.currentIndex = s.orderedIDs.count
+            session = s
             persistSession()
         }
     }
