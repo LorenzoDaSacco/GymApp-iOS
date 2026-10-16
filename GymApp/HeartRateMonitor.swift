@@ -40,6 +40,23 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     @Published private(set) var storageError: String?
     @Published private(set) var detectedDevices: [DeviceOption] = []
 
+    @Published private(set) var workoutReadings: [WorkoutHeartReading] = []
+    @Published private(set) var workoutRecording = false
+    private var workoutStartedAt: Date?
+
+    func beginWorkoutRecording() {
+        workoutReadings = []
+        workoutStartedAt = Date()
+        workoutRecording = true
+        if !enabled { start() }
+    }
+
+    func endWorkoutRecording() -> [WorkoutHeartReading] {
+        workoutRecording = false
+        workoutStartedAt = nil
+        return workoutReadings
+    }
+
     private static let enabledKey = "gymapp.heart.enabled.v1"
     private static let peripheralKey = "gymapp.heart.peripheralUUID.v1"
     private static let restorationID = "com.gymtrackerpro.onair.central.v1"
@@ -333,6 +350,9 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         let now = Date()
         latestBPM = bpm
         latestReadingAt = now
+        if workoutRecording {
+            workoutReadings.append(WorkoutHeartReading(at: now, bpm: bpm))
+        }
         let previousSlot = buckets.last?.slotStart
         HeartRateHistory.record(bpm: bpm, at: now, in: &buckets)
         // Save first reading of each interval immediately, then at most every 30s.

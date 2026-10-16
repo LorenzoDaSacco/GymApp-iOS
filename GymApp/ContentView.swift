@@ -111,6 +111,7 @@ struct ContentView: View {
 struct DashboardView: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
+    @State private var showingMonitoredWorkout = false
 
     var body: some View {
         ScrollView {
@@ -161,6 +162,17 @@ struct DashboardView: View {
                 .padding(16)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
 
+                Button {
+                    showingMonitoredWorkout = true
+                } label: {
+                    Label("Allenamento monitorato", systemImage: "figure.strengthtraining.traditional")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.dayExercises.isEmpty)
+
                 if store.dayExercises.isEmpty {
                     EmptyDayView()
                 } else {
@@ -172,6 +184,11 @@ struct DashboardView: View {
             .padding()
         }
         .navigationTitle(store.selectedDay)
+        .fullScreenCover(isPresented: $showingMonitoredWorkout) {
+            NavigationStack {
+                MonitoredWorkoutView(store: store)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reset") { store.resetDay() }
@@ -867,6 +884,23 @@ struct AddExerciseView: View {
             }
             Section("Esercizio") {
                 TextField("Nome", text: $name).focused($field)
+                if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let matches = ExerciseCatalog.search(name)
+                    if !matches.isEmpty {
+                        ForEach(matches.prefix(8)) { item in
+                            Button {
+                                name = item.name_it
+                                field = false
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.name_it)
+                                    Text(item.primary_muscles.joined(separator: ", ") + " · " + item.equipment.joined(separator: ", "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
                 if store.repetitionMode == .general {
                     TextField("Ripetizioni generali (es. 8-10)", text: $reps)
                 } else {
@@ -924,6 +958,360 @@ struct AddExerciseView: View {
             ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Fine") { field = false } }
         }
         .navigationTitle("Aggiungi esercizio")
+    }
+}
+
+// MARK: - ALLENAMENTO MONITORATO
+struct WorkoutHeartReading: Codable, Identifiable {
+    var id = UUID()
+    let at: Date
+    let bpm: Int
+}
+
+struct MonitoredWorkoutRecord: Codable, Identifiable {
+    var id = UUID()
+    let startedAt: Date
+    let endedAt: Date
+    let bodyWeight: Double
+    let completedExerciseNames: [String]
+    let readings: [WorkoutHeartReading]
+    let estimatedActiveCalories: Double
+}
+
+@MainActor
+final class MonitoredWorkoutStore: ObservableObject {
+    @Published var records: [MonitoredWorkoutRecord] = []
+    private let key = "gymapp.monitored.workouts.v1"
+    init() { if let data = UserDefaults.standard.data(forKey: key),
+              let saved = try? JSONDecoder().decode([MonitoredWorkoutRecord].self, from: data) { records = saved } }
+    func add(_ record: MonitoredWorkoutRecord) {
+        records.insert(record, at: 0)
+        if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: key) }
+    }
+}
+
+private struct ActiveMonitoredSession: Codable {
+    var startedAt: Date
+    var day: String
+    var orderedIDs: [UUID]
+    var currentIndex: Int
+    var completedIDs: [UUID]
+    var bodyWeight: Double
+    var activeSeconds: TimeInterval
+    var exerciseStartedAt: Date?
+    var recoveryUntil: Date?
+    var pausedAt: Date?
+}
+
+struct MonitoredWorkoutView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: WorkoutStore
+    @EnvironmentObject private var monitor: HeartRateMonitor
+    @AppStorage("gymapp.bodyWeight") private var bodyWeight = 108.0
+    @StateObject private var history = MonitoredWorkoutStore()
+    @State private var session: ActiveMonitoredSession?
+    @State private var now = Date()
+    @State private var showHeart = false
+    @State private var showList = false
+    @State private var weightDraft = ""
+    @State private var repsDraft = ""
+    @State private var message = ""
+    private let sessionKey = "gymapp.monitored.active.v2"
+
+    private var current: Exercise? {
+        guard let session, session.orderedIDs.indices.contains(session.currentIndex) else { return nil }
+        return store.exercises.first { $0.id == session.orderedIDs[session.currentIndex] }
+    }
+    private var nextSet: WorkoutSet? { current?.sets.first { !$0.completed } }
+    private var remainingRecovery: Int {
+        guard let until = session?.recoveryUntil else { return 0 }
+        return max(0, Int(ceil(until.timeIntervalSince(now))))
+    }
+    private var duration: TimeInterval {
+        guard let session else { return 0 }
+        return max(0, (session.pausedAt ?? now).timeIntervalSince(session.startedAt))
+    }
+    private var activeDuration: TimeInterval {
+        guard let session else { return 0 }
+        return session.activeSeconds + (session.exerciseStartedAt.map { max(0, (session.pausedAt ?? now).timeIntervalSince($0)) } ?? 0)
+    }
+    private var kcal: Double {
+        guard let session else { return 0 }
+        // Indicative active energy from 3.5 MET for resistance training; not a direct measurement.
+        return activeDuration / 3600 * session.bodyWeight * (3.5 - 1) * 1.05
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let session {
+                    HStack {
+                        Label(session.pausedAt == nil ? "Allenamento attivo" : "In pausa",
+                              systemImage: session.pausedAt == nil ? "circle.fill" : "pause.circle")
+                            .font(.subheadline.bold())
+                        Spacer()
+                        Text(duration.formattedDuration).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        metric("Battiti", "\(monitor.latestBPM.map(String.init) ?? "—")", "heart.fill")
+                            .onTapGesture { showHeart = true }
+                        metric("Calorie", "\(Int(kcal))", "flame.fill")
+                        metric("Recupero", TimeInterval(remainingRecovery).formattedDuration, "timer")
+                    }
+                    if session.pausedAt != nil {
+                        Button("Riprendi allenamento") { resume() }.buttonStyle(.borderedProminent)
+                    } else if let exercise = current {
+                        Text("Esercizio \(session.currentIndex + 1) di \(session.orderedIDs.count)")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(exercise.name).font(.largeTitle.bold())
+                        Text("Serie completate: \(exercise.sets.filter(\.completed).count) / \(exercise.sets.count)")
+                            .foregroundStyle(.secondary)
+                        if let set = nextSet {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading) {
+                                    Text("Peso (kg)").font(.caption)
+                                    TextField("kg", text: $weightDraft).keyboardType(.decimalPad)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                VStack(alignment: .leading) {
+                                    Text("Ripetizioni").font(.caption)
+                                    TextField("Reps", text: $repsDraft).keyboardType(.numberPad)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                            }
+                            Button("Completa serie") { complete(set: set, exercise: exercise) }
+                                .buttonStyle(.borderedProminent)
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Button("Prossimo esercizio") { advance() }.buttonStyle(.borderedProminent)
+                        }
+                        HStack {
+                            Button("Salta esercizio") { skip() }.disabled(session.orderedIDs.count < 2)
+                            Spacer()
+                            Button("Tutti gli esercizi") { showList = true }
+                        }.buttonStyle(.bordered)
+                    } else {
+                        Text("Tutti gli esercizi completati.").font(.headline)
+                    }
+                    Button("Pausa ed esci") { pause(); dismiss() }
+                        .buttonStyle(.bordered)
+                    Button("Termina e salva") { finish() }
+                        .foregroundStyle(.red)
+                } else {
+                    Text("Allenamento monitorato").font(.largeTitle.bold())
+                    HStack {
+                        Text("Peso corporeo (kg)")
+                        Spacer()
+                        TextField("kg", value: $bodyWeight, format: .number)
+                            .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 90)
+                    }
+                    Text("La scheda esistente determina esercizi, serie, ripetizioni e carichi.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Button("Avvia allenamento") { begin() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(store.dayExercises.isEmpty)
+                    if !message.isEmpty { Text(message).font(.caption) }
+                }
+                if !history.records.isEmpty {
+                    Divider()
+                    Text("Storico").font(.headline)
+                    ForEach(history.records.prefix(10)) { record in
+                        VStack(alignment: .leading) {
+                            Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
+                            Text("\(record.completedExerciseNames.count) esercizi · circa \(Int(record.estimatedActiveCalories)) kcal attive")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("Monitoraggio")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Chiudi") { pause(); dismiss() }
+            }
+        }
+        .sheet(isPresented: $showHeart) {
+            NavigationStack {
+                VStack {
+                    if monitor.workoutReadings.isEmpty {
+                        ContentUnavailableView("Nessun dato cardiaco", systemImage: "heart",
+                                               description: Text("Il grafico apparirà quando ONAIR trasmetterà i BPM."))
+                    } else {
+                        Chart(monitor.workoutReadings) { sample in
+                            LineMark(x: .value("Ora", sample.at), y: .value("BPM", sample.bpm))
+                        }.frame(height: 260).padding()
+                    }
+                    Spacer()
+                }
+                .navigationTitle("Battiti")
+                .toolbar { Button("Fine") { showHeart = false } }
+            }
+        }
+        .sheet(isPresented: $showList) {
+            NavigationStack {
+                List {
+                    if let session {
+                        ForEach(Array(session.orderedIDs.enumerated()), id: \.element) { index, id in
+                            if let exercise = store.exercises.first(where: { $0.id == id }) {
+                                Button {
+                                    switchTo(index)
+                                    showList = false
+                                } label: {
+                                    HStack {
+                                        Text(exercise.name)
+                                        Spacer()
+                                        if exercise.sets.allSatisfy(\.completed) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("Esercizi")
+                .toolbar { Button("Fine") { showList = false } }
+            }
+        }
+        .onAppear { restore() }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
+        .onChange(of: current?.id) { _, _ in loadDraft() }
+    }
+
+    private func metric(_ title: String, _ value: String, _ icon: String) -> some View {
+        VStack(spacing: 5) {
+            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3.bold()).monospacedDigit()
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+    private func persistSession() {
+        if let session, let data = try? JSONEncoder().encode(session) {
+            UserDefaults.standard.set(data, forKey: sessionKey)
+        } else if session == nil {
+            UserDefaults.standard.removeObject(forKey: sessionKey)
+        }
+    }
+    private func restore() {
+        if session == nil,
+           let data = UserDefaults.standard.data(forKey: sessionKey),
+           let saved = try? JSONDecoder().decode(ActiveMonitoredSession.self, from: data) {
+            session = saved
+        }
+        loadDraft()
+    }
+    private func begin() {
+        guard !store.dayExercises.isEmpty else { return }
+        session = ActiveMonitoredSession(startedAt: Date(), day: store.selectedDay,
+            orderedIDs: store.dayExercises.map(\.id), currentIndex: 0,
+            completedIDs: [], bodyWeight: max(20, bodyWeight), activeSeconds: 0,
+            exerciseStartedAt: Date(), recoveryUntil: nil, pausedAt: nil)
+        monitor.beginWorkoutRecording()
+        loadDraft()
+        persistSession()
+    }
+    private func pause() {
+        guard var s = session, s.pausedAt == nil else { return }
+        let date = Date()
+        if let start = s.exerciseStartedAt {
+            s.activeSeconds += max(0, date.timeIntervalSince(start))
+            s.exerciseStartedAt = nil
+        }
+        s.pausedAt = date
+        session = s
+        persistSession()
+    }
+    private func resume() {
+        guard var s = session, s.pausedAt != nil else { return }
+        s.pausedAt = nil
+        s.exerciseStartedAt = Date()
+        session = s
+        persistSession()
+    }
+    private func loadDraft() {
+        guard let exercise = current, let set = exercise.sets.first(where: { !$0.completed }) else {
+            weightDraft = ""; repsDraft = ""; return
+        }
+        weightDraft = String(format: "%.1f", set.weight)
+        repsDraft = store.effectiveReps(for: exercise, setIndex: exercise.sets.firstIndex(where: { $0.id == set.id }) ?? 0)
+    }
+    private func complete(set: WorkoutSet, exercise: Exercise) {
+        guard session?.pausedAt == nil,
+              let weight = Double(weightDraft.replacingOccurrences(of: ",", with: ".")),
+              weight > 0, let reps = Int(repsDraft), reps > 0 else {
+            message = "Controlla peso e ripetizioni"
+            return
+        }
+        store.updateWeight(weight, exerciseID: exercise.id, setID: set.id)
+        store.setReps(String(reps), exerciseID: exercise.id, setID: set.id)
+        store.toggle(exercise.id, setID: set.id)
+        if var s = session {
+            let recovery = exercise.recovery.isEmpty ? "2:00" : exercise.recovery
+            let components = recovery.split(separator: ":").compactMap { Double($0) }
+            let seconds = components.count == 2 ? components[0] * 60 + components[1] : (components.first ?? 120)
+            s.recoveryUntil = Date().addingTimeInterval(max(0, seconds))
+            session = s
+            persistSession()
+        }
+        if store.exercises.first(where: { $0.id == exercise.id })?.sets.allSatisfy(\.completed) == true {
+            advance()
+        } else { loadDraft() }
+    }
+    private func switchTo(_ index: Int) {
+        guard var s = session, s.orderedIDs.indices.contains(index) else { return }
+        s.currentIndex = index
+        session = s
+        loadDraft()
+        persistSession()
+    }
+    private func skip() {
+        guard let s = session else { return }
+        let count = s.orderedIDs.count
+        if let next = (1..<count).map({ (s.currentIndex + $0) % count }).first(where: { index in
+            guard let exercise = store.exercises.first(where: { $0.id == s.orderedIDs[index] }) else { return false }
+            return exercise.sets.contains(where: { !$0.completed })
+        }) { switchTo(next) }
+    }
+    private func advance() {
+        guard let s = session else { return }
+        let count = s.orderedIDs.count
+        if let next = (1..<count).map({ (s.currentIndex + $0) % count }).first(where: { index in
+            guard let exercise = store.exercises.first(where: { $0.id == s.orderedIDs[index] }) else { return false }
+            return exercise.sets.contains(where: { !$0.completed })
+        }) { switchTo(next) }
+        else if var updated = session {
+            updated.currentIndex = count
+            session = updated
+            persistSession()
+        }
+    }
+    private func finish() {
+        guard let s = session else { return }
+        pause()
+        let readings = monitor.endWorkoutRecording()
+        let names = s.orderedIDs.compactMap { id -> String? in
+            guard let exercise = store.exercises.first(where: { $0.id == id }),
+                  exercise.sets.allSatisfy(\.completed) else { return nil }
+            return exercise.name
+        }
+        history.add(MonitoredWorkoutRecord(startedAt: s.startedAt, endedAt: Date(),
+            bodyWeight: s.bodyWeight, completedExerciseNames: names,
+            readings: readings, estimatedActiveCalories: kcal))
+        session = nil
+        persistSession()
+        message = "Allenamento salvato"
+    }
+}
+
+private extension TimeInterval {
+    var formattedDuration: String {
+        let seconds = max(0, Int(self))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 }
 
@@ -1038,6 +1426,14 @@ struct SettingsView: View {
                     Label("Sincronizza i widget", systemImage: "arrow.triangle.2.circlepath")
                 }
                 Text("Se il contenitore condiviso non è disponibile, la causa è probabilmente la firma dell'IPA/App Group: SideStore non può correggerla dalla sola app. Non eliminare l'app per tentare la riparazione.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Allenamento monitorato") {
+                NavigationLink("Avvia allenamento e calcolo calorie") {
+                    MonitoredWorkoutView(store: store)
+                }
+                Text("Registra i BPM ricevuti dal Nilox, il grafico e le calorie attive stimate per la sessione.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
