@@ -42,6 +42,8 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
 
     @Published private(set) var workoutReadings: [WorkoutHeartReading] = []
     @Published private(set) var workoutRecording = false
+    @Published private(set) var workoutDiagnostic: String = "Sensore non ancora verificato"
+    private var workoutStartSequence = 0
     private var workoutStartedAt: Date?
     @Published private(set) var liveStatus = "In attesa del sensore"
     private var measurementCharacteristic: CBCharacteristic?
@@ -57,13 +59,24 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         lastWorkoutBPMAt = nil
         recoveryAttempts = 0
         liveStatus = "Connessione e ricezione BPM in corso…"
+        workoutDiagnostic = "Connessione al bracciale in corso…"
         if !enabled { start() } else { connectIfPossible() }
         startWorkoutWatchdog()
+        workoutStartSequence += 1
+        let sequence = workoutStartSequence
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self, self.workoutRecording, self.workoutStartSequence == sequence,
+                  self.workoutReadings.isEmpty else { return }
+            self.workoutDiagnostic = self.connection == .listening
+                ? "ONAIR connesso, ma non trasmette BPM. Potrebbe richiedere un comando proprietario."
+                : "ONAIR non sta inviando BPM. Controlla connessione e permessi Bluetooth."
+        }
     }
 
     func endWorkoutRecording() -> [WorkoutHeartReading] {
         workoutRecording = false
         watchdogGeneration += 1
+        workoutStartSequence += 1
         workoutStartedAt = nil
         return workoutReadings
     }
@@ -407,9 +420,8 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         if workoutRecording {
             lastWorkoutBPMAt = now
             liveStatus = "BPM ricevuti dal bracciale"
+            workoutDiagnostic = "BPM ricevuti correttamente da ONAIR"
             recoveryAttempts = 0
-        }
-        if workoutRecording {
             workoutReadings.append(WorkoutHeartReading(at: now, bpm: bpm))
         }
         let previousSlot = buckets.last?.slotStart
