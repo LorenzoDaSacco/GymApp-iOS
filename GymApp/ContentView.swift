@@ -968,6 +968,22 @@ struct WorkoutHeartReading: Codable, Identifiable {
     let bpm: Int
 }
 
+struct ExerciseActivitySegment: Codable {
+    let exerciseID: UUID
+    let exerciseName: String
+    let from: Date
+    let to: Date
+}
+
+struct ExerciseWorkoutAnalytics: Codable, Identifiable {
+    var id: UUID
+    let name: String
+    let activeSeconds: TimeInterval
+    let estimatedCalories: Double
+    let averageBPM: Int?
+    let maximumBPM: Int?
+}
+
 struct MonitoredWorkoutRecord: Codable, Identifiable {
     var id = UUID()
     let startedAt: Date
@@ -976,6 +992,9 @@ struct MonitoredWorkoutRecord: Codable, Identifiable {
     let completedExerciseNames: [String]
     let readings: [WorkoutHeartReading]
     let estimatedActiveCalories: Double
+    // Optional: consente di aprire anche allenamenti registrati con versioni precedenti.
+    var exerciseAnalytics: [ExerciseWorkoutAnalytics]? = nil
+    var resumableSession: Data? = nil
 }
 
 @MainActor
@@ -996,9 +1015,16 @@ final class MonitoredWorkoutStore: ObservableObject {
             records = saved
         }
     }
+    private func persist() {
+        if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: key) }
+    }
     func add(_ record: MonitoredWorkoutRecord) {
         records.insert(record, at: 0)
-        if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: key) }
+        persist()
+    }
+    func delete(_ id: UUID) {
+        records.removeAll { $0.id == id }
+        persist()
     }
 }
 
@@ -1015,6 +1041,8 @@ private struct ActiveMonitoredSession: Codable {
     var exerciseStartedAt: Date?
     var recoveryUntil: Date?
     var pausedAt: Date?
+    var activitySegments: [ExerciseActivitySegment]? = nil
+    var trackingStartedAt: Date? = nil
 }
 
 struct MonitoredWorkoutView: View {
@@ -1028,6 +1056,12 @@ struct MonitoredWorkoutView: View {
     @State private var now = Date()
     @State private var showHeart = false
     @State private var showList = false
+    @State private var selectedRecap: MonitoredWorkoutRecord?
+    @State private var showFinishConfirmation = false
+    @State private var deletionCandidate: MonitoredWorkoutRecord?
+    @State private var showDeleteFirstStep = false
+    @State private var showDeleteFinalStep = false
+    @State private var resumedReadings: [WorkoutHeartReading] = []
     @State private var weightDraft = ""
     @State private var repsDraft = ""
     @State private var message = ""
@@ -1041,6 +1075,12 @@ struct MonitoredWorkoutView: View {
     private var remainingRecovery: Int {
         guard let until = session?.recoveryUntil else { return 0 }
         return max(0, Int(ceil(until.timeIntervalSince(now))))
+    }
+    private var recoveryCountdown: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = max(0, Int(ceil((session?.recoveryUntil ?? context.date).timeIntervalSince(context.date))))
+            monitorMetric("Recupero", TimeInterval(remaining).formattedDuration, "timer")
+        }
     }
     private var duration: TimeInterval {
         guard let session else { return 0 }
@@ -1077,7 +1117,7 @@ struct MonitoredWorkoutView: View {
                         }
                         .buttonStyle(.plain)
                         monitorMetric("Calorie", "\(Int(kcal))", "flame.fill")
-                        monitorMetric("Recupero", TimeInterval(remainingRecovery).formattedDuration, "timer")
+                        recoveryCountdown
                     }
 
                     if monitor.workoutReadings.isEmpty {
@@ -1173,7 +1213,7 @@ struct MonitoredWorkoutView: View {
                         }
                         .buttonStyle(.bordered)
                         Spacer()
-                        Button("Termina e salva") { finish() }
+                        Button("Termina e salva") { showFinishConfirmation = true }
                             .foregroundStyle(accentColor)
                     }
                 } else {
@@ -1209,17 +1249,36 @@ struct MonitoredWorkoutView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("STORICO ALLENAMENTI")
                             .font(.caption.bold()).tracking(1.4).foregroundStyle(accentColor)
-                        ForEach(history.records.prefix(10)) { record in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.subheadline.bold())
-                                    Text("\(record.completedExerciseNames.count) esercizi · circa \(Int(record.estimatedActiveCalories)) kcal attive")
-                                        .font(.caption).foregroundStyle(.secondary)
+                        ForEach(history.records) { record in
+                            Button { selectedRecap = record } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(record.startedAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.subheadline.bold())
+                                        Text("\(record.completedExerciseNames.count) esercizi · circa \(Int(record.estimatedActiveCalories)) kcal attive")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chart.bar.xaxis")
+                                        .foregroundStyle(accentColor)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            HStack(spacing: 12) {
+                                if record.resumableSession != nil && session == nil {
+                                    Button { resumeSavedWorkout(record) } label: {
+                                        Label("Riprendi", systemImage: "arrow.uturn.backward")
+                                    }
+                                    .buttonStyle(.bordered)
                                 }
                                 Spacer()
-                                Image(systemName: "checkmark.circle")
-                                    .foregroundStyle(accentColor)
+                                Button(role: .destructive) {
+                                    deletionCandidate = record
+                                    showDeleteFirstStep = true
+                                } label: {
+                                    Label("Elimina", systemImage: "trash")
+                                }
+                                .buttonStyle(.bordered)
                             }
                             Divider()
                         }
@@ -1235,6 +1294,38 @@ struct MonitoredWorkoutView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Chiudi") { pause(); dismiss() }
+            }
+        }
+        .confirmationDialog("Terminare l’allenamento?", isPresented: $showFinishConfirmation, titleVisibility: .visible) {
+            Button("Termina e salva") { finish() }
+            Button("Continua allenamento", role: .cancel) { }
+        } message: {
+            Text("L’allenamento sarà salvato nello storico. Potrai anche riprenderlo se hai premuto Termina per errore.")
+        }
+        .confirmationDialog("Eliminare questo allenamento?", isPresented: $showDeleteFirstStep, titleVisibility: .visible) {
+            Button("Continua con l’eliminazione", role: .destructive) { showDeleteFinalStep = true }
+            Button("Annulla", role: .cancel) { deletionCandidate = nil }
+        } message: {
+            Text("Prima verifica: l’allenamento e le sue analitiche verranno eliminati dallo storico.")
+        }
+        .alert("Conferma definitiva", isPresented: $showDeleteFinalStep) {
+            Button("Elimina definitivamente", role: .destructive) {
+                if let candidate = deletionCandidate {
+                    history.delete(candidate.id)
+                    if selectedRecap?.id == candidate.id { selectedRecap = nil }
+                }
+                deletionCandidate = nil
+            }
+            Button("Annulla", role: .cancel) { deletionCandidate = nil }
+        } message: {
+            Text("Seconda verifica: questa eliminazione non può essere annullata. Le schede e gli esercizi non saranno modificati.")
+        }
+        .sheet(item: $selectedRecap) { record in
+            NavigationStack {
+                MonitoredWorkoutRecapView(record: record)
+                    .navigationTitle("Analisi allenamento")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { Button("Fine") { selectedRecap = nil } }
             }
         }
         .sheet(isPresented: $showHeart) {
@@ -1318,7 +1409,9 @@ struct MonitoredWorkoutView: View {
         session = ActiveMonitoredSession(startedAt: Date(), day: store.selectedDay,
             orderedIDs: store.dayExercises.map(\.id), currentIndex: 0,
             completedIDs: [], skippedIDs: [], bodyWeight: max(20, bodyWeight), activeSeconds: 0,
-            exerciseStartedAt: Date(), recoveryUntil: nil, pausedAt: nil)
+            exerciseStartedAt: Date(), recoveryUntil: nil, pausedAt: nil,
+            activitySegments: [], trackingStartedAt: Date())
+        resumedReadings = []
         monitor.beginWorkoutRecording()
         loadDraft()
         persistSession()
@@ -1330,6 +1423,7 @@ struct MonitoredWorkoutView: View {
             s.activeSeconds += max(0, date.timeIntervalSince(start))
             s.exerciseStartedAt = nil
         }
+        closeActivitySegment(&s, at: date)
         s.pausedAt = date
         session = s
         persistSession()
@@ -1338,6 +1432,7 @@ struct MonitoredWorkoutView: View {
         guard var s = session, s.pausedAt != nil else { return }
         s.pausedAt = nil
         s.exerciseStartedAt = Date()
+        s.trackingStartedAt = Date()
         session = s
         persistSession()
     }
@@ -1362,7 +1457,10 @@ struct MonitoredWorkoutView: View {
             let recovery = exercise.recovery.isEmpty ? "2:00" : exercise.recovery
             let components = recovery.split(separator: ":").compactMap { Double($0) }
             let seconds = components.count == 2 ? components[0] * 60 + components[1] : (components.first ?? 120)
-            s.recoveryUntil = Date().addingTimeInterval(max(0, seconds))
+            // Condividi la stessa scadenza con la scheda principale, le notifiche
+            // e la Live Activity: nessun timer parallelo non sincronizzato.
+            s.recoveryUntil = RecoveryNotifications.shared.endDate(for: set.id)
+                ?? Date().addingTimeInterval(max(0, seconds))
             session = s
             persistSession()
         }
@@ -1370,9 +1468,25 @@ struct MonitoredWorkoutView: View {
             advance()
         } else { loadDraft() }
     }
+    private func closeActivitySegment(_ s: inout ActiveMonitoredSession, at date: Date) {
+        guard let from = s.trackingStartedAt, date > from,
+              s.orderedIDs.indices.contains(s.currentIndex),
+              let exercise = store.exercises.first(where: { $0.id == s.orderedIDs[s.currentIndex] }) else {
+            s.trackingStartedAt = nil
+            return
+        }
+        var segments = s.activitySegments ?? []
+        segments.append(ExerciseActivitySegment(exerciseID: exercise.id,
+            exerciseName: exercise.name, from: from, to: date))
+        s.activitySegments = segments
+        s.trackingStartedAt = nil
+    }
+
     private func switchTo(_ index: Int) {
         guard var s = session, s.orderedIDs.indices.contains(index) else { return }
+        closeActivitySegment(&s, at: Date())
         s.currentIndex = index
+        s.trackingStartedAt = s.pausedAt == nil ? Date() : nil
         session = s
         loadDraft()
         persistSession()
@@ -1441,18 +1555,55 @@ struct MonitoredWorkoutView: View {
             persistSession()
         }
     }
+    private func resumeSavedWorkout(_ record: MonitoredWorkoutRecord) {
+        guard session == nil, let data = record.resumableSession,
+              var saved = try? JSONDecoder().decode(ActiveMonitoredSession.self, from: data) else { return }
+        // Rimuovi il vecchio record: sarà rigenerato al termine della sessione ripresa.
+        history.delete(record.id)
+        selectedRecap = nil
+        resumedReadings = record.readings
+        saved.pausedAt = Date()
+        saved.exerciseStartedAt = nil
+        saved.trackingStartedAt = nil
+        session = saved
+        persistSession()
+        monitor.beginWorkoutRecording()
+        loadDraft()
+        message = "Allenamento ripristinato: premi Riprendi allenamento"
+    }
     private func finish() {
-        guard let s = session else { return }
+        guard session != nil else { return }
         pause()
-        let readings = monitor.endWorkoutRecording()
+        guard let s = session else { return }
+        let readings = resumedReadings + monitor.endWorkoutRecording()
         let names = s.orderedIDs.compactMap { id -> String? in
             guard let exercise = store.exercises.first(where: { $0.id == id }),
                   exercise.sets.allSatisfy(\.completed) else { return nil }
             return exercise.name
         }
+        let segments = s.activitySegments ?? []
+        let secondsByExercise = Dictionary(grouping: segments, by: \.exerciseID)
+        let totalSeconds = segments.reduce(0.0) { $0 + max(0, $1.to.timeIntervalSince($1.from)) }
+        let totalCalories = kcal
+        let analytics: [ExerciseWorkoutAnalytics] = s.orderedIDs.compactMap { id in
+            guard let exercise = store.exercises.first(where: { $0.id == id }),
+                  let parts = secondsByExercise[id], !parts.isEmpty else { return nil }
+            let seconds = parts.reduce(0.0) { $0 + max(0, $1.to.timeIntervalSince($1.from)) }
+            let bpmValues = readings.filter { reading in
+                parts.contains { reading.at >= $0.from && reading.at <= $0.to }
+            }.map(\.bpm)
+            return ExerciseWorkoutAnalytics(id: id, name: exercise.name,
+                activeSeconds: seconds,
+                estimatedCalories: totalSeconds > 0 ? totalCalories * seconds / totalSeconds : 0,
+                averageBPM: bpmValues.isEmpty ? nil : Int((Double(bpmValues.reduce(0,+)) / Double(bpmValues.count)).rounded()),
+                maximumBPM: bpmValues.max())
+        }
         history.add(MonitoredWorkoutRecord(startedAt: s.startedAt, endedAt: Date(),
             bodyWeight: s.bodyWeight, completedExerciseNames: names,
-            readings: readings, estimatedActiveCalories: kcal))
+            readings: readings, estimatedActiveCalories: totalCalories,
+            exerciseAnalytics: analytics,
+            resumableSession: try? JSONEncoder().encode(s)))
+        resumedReadings = []
         session = nil
         persistSession()
         message = "Allenamento salvato"
@@ -1463,6 +1614,111 @@ private extension TimeInterval {
     var formattedDuration: String {
         let seconds = max(0, Int(self))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+
+// MARK: - ANALITICHE PER ALLENAMENTO SALVATO
+private struct MonitoredWorkoutRecapView: View {
+    let record: MonitoredWorkoutRecord
+    private var averageBPM: Int? {
+        guard !record.readings.isEmpty else { return nil }
+        return Int((Double(record.readings.reduce(0) { $0 + $1.bpm }) / Double(record.readings.count)).rounded())
+    }
+    private var highestHeartExercise: ExerciseWorkoutAnalytics? {
+        record.exerciseAnalytics?.filter { $0.maximumBPM != nil }
+            .max { ($0.maximumBPM ?? 0) < ($1.maximumBPM ?? 0) }
+    }
+    private var highestCalorieExercise: ExerciseWorkoutAnalytics? {
+        record.exerciseAnalytics?.max { $0.estimatedCalories < $1.estimatedCalories }
+    }
+    private var sortedExercises: [ExerciseWorkoutAnalytics] {
+        (record.exerciseAnalytics ?? []).sorted { $0.estimatedCalories > $1.estimatedCalories }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("RIEPILOGO ALLENAMENTO")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                    Text(record.startedAt.formatted(date: .complete, time: .shortened))
+                        .font(.title3.bold())
+                    Text("Durata totale: \(record.endedAt.timeIntervalSince(record.startedAt).formattedDuration)")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 10) {
+                    metric("CALORIE STIMATE", "\(Int(record.estimatedActiveCalories.rounded()))", "kcal", "flame.fill")
+                    metric("BATTITI MEDI", averageBPM.map(String.init) ?? "—", "BPM", "heart.fill")
+                }
+                HStack(spacing: 10) {
+                    metric("PICCO CARDIACO", record.readings.map(\.bpm).max().map(String.init) ?? "—", "BPM", "waveform.path.ecg")
+                    metric("ESERCIZI COMPLETATI", "\(record.completedExerciseNames.count)", "esercizi", "checkmark.circle.fill")
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("I RECORD DELLA SESSIONE").font(.caption.bold()).foregroundStyle(.secondary)
+                    highlight("Più calorie stimate", name: highestCalorieExercise?.name ?? "Non disponibile",
+                              value: highestCalorieExercise.map { "~\(Int($0.estimatedCalories.rounded())) kcal" } ?? "—", symbol: "flame.fill")
+                    Divider()
+                    highlight("Battito massimo per esercizio", name: highestHeartExercise?.name ?? "Nessun dato cardiaco",
+                              value: highestHeartExercise?.maximumBPM.map { "\($0) BPM" } ?? "—", symbol: "heart.fill")
+                }
+                .padding(16).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                Text("DETTAGLIO PER ESERCIZIO").font(.caption.bold()).foregroundStyle(.secondary)
+                if sortedExercises.isEmpty {
+                    Text("Analisi per esercizio non disponibile per questa registrazione.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(sortedExercises) { item in
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(item.name).font(.headline)
+                            HStack(spacing: 8) {
+                                smallMetric("CALORIE", "~\(Int(item.estimatedCalories.rounded())) kcal")
+                                smallMetric("BPM MEDI", item.averageBPM.map { "\($0)" } ?? "—")
+                                smallMetric("BPM MAX", item.maximumBPM.map { "\($0)" } ?? "—")
+                            }
+                            HStack {
+                                Image(systemName: "clock")
+                                Text("Tempo attribuito: \(item.activeSeconds.formattedDuration)")
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                    }
+                }
+                Text("Le calorie sono stime ripartite per tempo attribuito a ogni esercizio. I BPM sono calcolati soltanto dalle letture realmente ricevute da ONAIR. Il simbolo — indica dati mancanti.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .padding()
+        }
+    }
+    private func metric(_ title: String, _ value: String, _ unit: String, _ symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(title, systemImage: symbol).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 29, weight: .bold, design: .rounded)).monospacedDigit()
+            Text(unit).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+    private func smallMetric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+            Text(value).font(.subheadline.bold()).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func highlight(_ title: String, name: String, value: String, symbol: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: symbol).font(.title2).frame(width: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(name).font(.headline)
+            }
+            Spacer(minLength: 4)
+            Text(value).font(.subheadline.bold()).monospacedDigit()
+        }
     }
 }
 
