@@ -327,7 +327,11 @@ final class WorkoutStore: ObservableObject {
     }
 
     func initialMonitoredReps(for exercise: Exercise, setIndex: Int) -> String {
-        Self.lowerBoundReps(prescribedReps(for: exercise, setIndex: setIndex))
+        // In monitoraggio non si chiede un inserimento manuale: assumiamo
+        // raggiunto il valore più alto del range indicato nella scheda.
+        let prescription = prescribedReps(for: exercise, setIndex: setIndex)
+        let values = prescription.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        return String(values.filter { $0 > 0 && $0 <= 100 }.max() ?? 1)
     }
 
     private static func lowerBoundReps(_ value: String) -> String {

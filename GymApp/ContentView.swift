@@ -1067,7 +1067,7 @@ struct MonitoredWorkoutView: View {
     @FocusState private var focusedInput: MonitoredInput?
     private let sessionKey = "gymapp.monitored.active.v2"
 
-    private enum MonitoredInput: Hashable { case weight, reps, bodyWeight }
+    private enum MonitoredInput: Hashable { case weight, bodyWeight }
 
     private var current: Exercise? {
         guard let session, session.orderedIDs.indices.contains(session.currentIndex) else { return nil }
@@ -1148,11 +1148,6 @@ struct MonitoredWorkoutView: View {
                             Text(exercise.name)
                                 .font(.system(size: 27, weight: .bold, design: .rounded))
                                 .fixedSize(horizontal: false, vertical: true)
-                            if let index = exercise.sets.firstIndex(where: { !$0.completed }) {
-                                Text("Ripetizioni previste: \(store.prescribedReps(for: exercise, setIndex: index))")
-                                    .font(.subheadline.bold())
-                                    .foregroundStyle(accentColor)
-                            }
                             HStack {
                                 Text("Serie completate")
                                     .foregroundStyle(.secondary)
@@ -1175,12 +1170,14 @@ struct MonitoredWorkoutView: View {
                                             .textFieldStyle(.roundedBorder)
                                     }
                                     VStack(alignment: .leading, spacing: 7) {
-                                        Text("RIPETIZIONI ESEGUITE").font(.caption2.bold()).foregroundStyle(.secondary)
-                                        TextField("Reps", text: $repsDraft)
-                                            .keyboardType(.numberPad)
-                                            .focused($focusedInput, equals: .reps)
+                                        Text("RIPETIZIONI PREVISTE").font(.caption2.bold()).foregroundStyle(.secondary)
+                                        Text(store.prescribedReps(for: exercise,
+                                            setIndex: exercise.sets.firstIndex(where: { $0.id == set.id }) ?? 0))
                                             .font(.title3.bold())
-                                            .textFieldStyle(.roundedBorder)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 12)
+                                            .frame(height: 45)
+                                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 7))
                                     }
                                 }
                                 Button { complete(set: set, exercise: exercise) } label: {
