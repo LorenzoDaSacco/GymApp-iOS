@@ -1889,6 +1889,7 @@ private enum GymMembershipReminders {
         return calendar.date(byAdding: .month, value: months, to: calendar.startOfDay(for: paymentDate)) ?? paymentDate
     }
 
+    @MainActor
     static func schedule(paymentDate: Date, months: Int) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: daysBefore.map(notificationID))
@@ -1974,6 +1975,7 @@ private struct GymMembershipView: View {
         }
     }
 
+    @MainActor
     private func savePayment() {
         savedPaymentTimestamp = Calendar.autoupdatingCurrent.startOfDay(for: paymentDate).timeIntervalSince1970
         savedMonths = months
