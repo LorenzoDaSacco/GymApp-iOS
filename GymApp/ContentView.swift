@@ -1,6 +1,7 @@
 import SwiftUI
 import Charts
 import Combine
+import UserNotifications
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
     case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
@@ -231,7 +232,6 @@ struct ExerciseCard: View {
     @State private var editing = false
     @State private var showingDeleteConfirmation = false
     @State private var targetRepsDraft = ""
-    @AppStorage("gymapp.showMuscleMap") private var showMuscleMap = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -244,6 +244,7 @@ struct ExerciseCard: View {
                         .font(.caption.bold()).foregroundStyle(accentColor)
                 }
                 Spacer()
+                ProgressionExerciseMenu(store: store, exerciseID: exercise.id)
                 Button(editing ? "Fine" : "Modifica") {
                     if editing { commitTargetReps() }
                     else {
@@ -289,24 +290,6 @@ struct ExerciseCard: View {
                     if targetRepsDraft != newValue { targetRepsDraft = newValue }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle(isOn: Binding(
-                        get: { store.progressionEnabled(for: exercise.id) },
-                        set: { enabled in
-                            store.setProgressionEnabled(enabled, for: exercise.id)
-                            if enabled { RecoveryNotifications.shared.requestPermission() }
-                        }
-                    )) {
-                        Label("Ricordami di progredire", systemImage: "arrow.up.right")
-                            .font(.subheadline.bold())
-                    }
-                    .tint(accentColor)
-                    Text("Quando raggiungi l'obiettivo in tutte le serie, comparirà qui un avviso per la seduta successiva. Nessun incremento fisso: decidi tu di quanti kg salire.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(12)
-                .background(accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
-
                 Button(role: .destructive) { showingDeleteConfirmation = true } label: {
                     Label("Elimina esercizio", systemImage: "trash")
                         .font(.subheadline.bold())
@@ -345,11 +328,6 @@ struct ExerciseCard: View {
                 Text("\(exercise.sets.count) serie").font(.caption).foregroundStyle(.secondary)
             }
 
-            if showMuscleMap {
-                MuscleMapView(target: exercise.target)
-                    .frame(height: 185)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
-            }
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
@@ -370,6 +348,27 @@ struct ExerciseCard: View {
         }
         store.setTargetReps(value, exerciseID: exercise.id)
         targetRepsDraft = value
+    }
+}
+
+private struct ProgressionExerciseMenu: View {
+    @ObservedObject var store: WorkoutStore
+    let exerciseID: UUID
+
+    var body: some View {
+        Menu {
+            Button {
+                let enabled = !store.progressionEnabled(for: exerciseID)
+                store.setProgressionEnabled(enabled, for: exerciseID)
+                if enabled { RecoveryNotifications.shared.requestPermission() }
+            } label: {
+                Label("Ricordami di progredire", systemImage: store.progressionEnabled(for: exerciseID) ? "checkmark.circle.fill" : "circle")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .accessibilityLabel("Opzioni esercizio")
+        }
     }
 }
 
@@ -1065,7 +1064,10 @@ struct MonitoredWorkoutView: View {
     @State private var weightDraft = ""
     @State private var repsDraft = ""
     @State private var message = ""
+    @FocusState private var focusedInput: MonitoredInput?
     private let sessionKey = "gymapp.monitored.active.v2"
+
+    private enum MonitoredInput: Hashable { case weight, reps, bodyWeight }
 
     private var current: Exercise? {
         guard let session, session.orderedIDs.indices.contains(session.currentIndex) else { return nil }
@@ -1141,10 +1143,16 @@ struct MonitoredWorkoutView: View {
                                     .font(.caption2.bold())
                                     .padding(.horizontal, 12).padding(.vertical, 7)
                                     .background(accentColor.opacity(0.14), in: Capsule())
+                                ProgressionExerciseMenu(store: store, exerciseID: exercise.id)
                             }
                             Text(exercise.name)
                                 .font(.system(size: 27, weight: .bold, design: .rounded))
                                 .fixedSize(horizontal: false, vertical: true)
+                            if let index = exercise.sets.firstIndex(where: { !$0.completed }) {
+                                Text("Ripetizioni previste: \(store.prescribedReps(for: exercise, setIndex: index))")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(accentColor)
+                            }
                             HStack {
                                 Text("Serie completate")
                                     .foregroundStyle(.secondary)
@@ -1162,13 +1170,15 @@ struct MonitoredWorkoutView: View {
                                         Text("PESO (KG)").font(.caption2.bold()).foregroundStyle(.secondary)
                                         TextField("kg", text: $weightDraft)
                                             .keyboardType(.decimalPad)
+                                            .focused($focusedInput, equals: .weight)
                                             .font(.title3.bold())
                                             .textFieldStyle(.roundedBorder)
                                     }
                                     VStack(alignment: .leading, spacing: 7) {
-                                        Text("RIPETIZIONI").font(.caption2.bold()).foregroundStyle(.secondary)
+                                        Text("RIPETIZIONI ESEGUITE").font(.caption2.bold()).foregroundStyle(.secondary)
                                         TextField("Reps", text: $repsDraft)
                                             .keyboardType(.numberPad)
+                                            .focused($focusedInput, equals: .reps)
                                             .font(.title3.bold())
                                             .textFieldStyle(.roundedBorder)
                                     }
@@ -1227,6 +1237,7 @@ struct MonitoredWorkoutView: View {
                             Spacer()
                             TextField("kg", value: $bodyWeight, format: .number)
                                 .keyboardType(.decimalPad)
+                                .focused($focusedInput, equals: .bodyWeight)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 90)
                                 .textFieldStyle(.roundedBorder)
@@ -1289,11 +1300,17 @@ struct MonitoredWorkoutView: View {
             }
             .padding()
         }
+        .scrollDismissesKeyboard(.interactively)
+        .onTapGesture { focusedInput = nil }
         .navigationTitle("Monitoraggio")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Chiudi") { pause(); dismiss() }
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Fine") { focusedInput = nil }
             }
         }
         .confirmationDialog("Terminare l’allenamento?", isPresented: $showFinishConfirmation, titleVisibility: .visible) {
@@ -1441,9 +1458,10 @@ struct MonitoredWorkoutView: View {
             weightDraft = ""; repsDraft = ""; return
         }
         weightDraft = String(format: "%.1f", set.weight)
-        repsDraft = store.effectiveReps(for: exercise, setIndex: exercise.sets.firstIndex(where: { $0.id == set.id }) ?? 0)
+        repsDraft = store.initialMonitoredReps(for: exercise, setIndex: exercise.sets.firstIndex(where: { $0.id == set.id }) ?? 0)
     }
     private func complete(set: WorkoutSet, exercise: Exercise) {
+        focusedInput = nil
         guard session?.pausedAt == nil,
               let weight = Double(weightDraft.replacingOccurrences(of: ",", with: ".")),
               weight > 0, let reps = Int(repsDraft), reps > 0 else {
@@ -1729,7 +1747,6 @@ struct SettingsView: View {
     @ObservedObject var store: WorkoutStore
     @Binding var darkMode: Bool
     @Binding var accentColorName: String
-    @AppStorage("gymapp.showMuscleMap") private var showMuscleMap = true
 
     var body: some View {
         Form {
@@ -1740,7 +1757,6 @@ struct SettingsView: View {
                         HStack { Circle().fill(option.color).frame(width: 12, height: 12); Text(option.title) }.tag(option.rawValue)
                     }
                 }
-                Toggle("Mostra immagine muscolare", isOn: $showMuscleMap)
             }
 
             Section("Organizzazione allenamenti") {
@@ -1749,6 +1765,11 @@ struct SettingsView: View {
                     set: { store.setScheduleMode($0) }
                 )) {
                     ForEach(ScheduleMode.allCases) { Text($0.title).tag($0) }
+                }
+                NavigationLink {
+                    GymMembershipView()
+                } label: {
+                    Label("Scadenza abbonamento palestra", systemImage: "calendar.badge.clock")
                 }
                 if store.scheduleMode == .trainingDays {
                     Stepper("Giorni della scheda: \(store.trainingDayCount)", value: Binding(
@@ -1821,7 +1842,7 @@ struct SettingsView: View {
 
             Section("Promemoria progressione") {
                 Label("La progressione si gestisce in ogni esercizio", systemImage: "arrow.up.forward")
-                Text("Apri Scheda → Modifica sull'esercizio → Ricordami di progredire. L'app ti avvisa quando hai raggiunto le ripetizioni previste, ma il nuovo carico lo scegli tu.")
+                Text("Apri il menu ⋯ del singolo esercizio, nella Scheda o durante l'Allenamento monitorato, per attivare Ricordami di progredire. Il nuovo carico lo scegli tu.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -1856,6 +1877,107 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Impostazioni")
+    }
+}
+
+private enum GymMembershipReminders {
+    private static let daysBefore = [7, 3, 1]
+    private static func notificationID(_ days: Int) -> String { "gymapp.membership.expiry.\(days)" }
+
+    static func expirationDate(paymentDate: Date, months: Int) -> Date {
+        let calendar = Calendar.autoupdatingCurrent
+        return calendar.date(byAdding: .month, value: months, to: calendar.startOfDay(for: paymentDate)) ?? paymentDate
+    }
+
+    static func schedule(paymentDate: Date, months: Int) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: daysBefore.map(notificationID))
+        RecoveryNotifications.shared.requestPermission()
+
+        let calendar = Calendar.autoupdatingCurrent
+        let expiry = expirationDate(paymentDate: paymentDate, months: months)
+        for days in daysBefore {
+            guard let date = calendar.date(byAdding: .day, value: -days, to: expiry),
+                  let reminder = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: date),
+                  reminder > Date() else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Abbonamento palestra in scadenza"
+            content.body = "Scade tra \(days) \(days == 1 ? "giorno" : "giorni"), il \(expiry.formatted(date: .abbreviated, time: .omitted))."
+            content.sound = .default
+            let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminder)
+            center.add(UNNotificationRequest(
+                identifier: notificationID(days),
+                content: content,
+                trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            ))
+        }
+    }
+}
+
+private struct GymMembershipView: View {
+    @Environment(\.gymAccentColor) private var accentColor
+    @AppStorage("gymapp.membership.paymentTimestamp.v1") private var savedPaymentTimestamp = 0.0
+    @AppStorage("gymapp.membership.months.v1") private var savedMonths = 1
+    @State private var paymentDate = Date()
+    @State private var months = 1
+
+    private var expiryPreview: Date {
+        GymMembershipReminders.expirationDate(paymentDate: paymentDate, months: months)
+    }
+    private var savedExpiry: Date {
+        GymMembershipReminders.expirationDate(paymentDate: Date(timeIntervalSince1970: savedPaymentTimestamp), months: savedMonths)
+    }
+
+    var body: some View {
+        Form {
+            Section("Calendario abbonamento") {
+                DatePicker("Data del pagamento", selection: $paymentDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                Stepper("Durata: \(months) \(months == 1 ? "mese" : "mesi")", value: $months, in: 1...36)
+                LabeledContent("Scadenza prevista", value: expiryPreview.formatted(date: .complete, time: .omitted))
+                Button(savedPaymentTimestamp > 0 ? "Salva pagamento o rinnovo" : "Salva pagamento") {
+                    savePayment()
+                }
+                .fontWeight(.semibold)
+            }
+
+            if savedPaymentTimestamp > 0 {
+                Section("Abbonamento registrato") {
+                    LabeledContent("Pagato il", value: Date(timeIntervalSince1970: savedPaymentTimestamp).formatted(date: .abbreviated, time: .omitted))
+                    LabeledContent("Durata", value: "\(savedMonths) \(savedMonths == 1 ? "mese" : "mesi")")
+                    LabeledContent("Scade il", value: savedExpiry.formatted(date: .abbreviated, time: .omitted))
+                    let remaining = Calendar.autoupdatingCurrent.dateComponents([.day],
+                        from: Calendar.autoupdatingCurrent.startOfDay(for: Date()), to: savedExpiry).day ?? 0
+                    Label(remaining < 0 ? "Abbonamento scaduto" : remaining == 0 ? "Scade oggi" : "Mancano \(remaining) giorni",
+                          systemImage: remaining < 0 ? "exclamationmark.circle" : "calendar.badge.clock")
+                        .foregroundStyle(remaining < 0 ? .red : accentColor)
+                    Button("Registra rinnovo da oggi") {
+                        paymentDate = Date()
+                        savePayment()
+                    }
+                }
+            }
+
+            Section("Promemoria") {
+                Label("Notifiche 7, 3 e 1 giorno prima della scadenza, alle 09:00", systemImage: "bell")
+                    .font(.subheadline)
+                Text("I promemoria vengono programmati quando salvi il pagamento. Quelli già trascorsi non vengono inviati. Le notifiche devono essere consentite nelle impostazioni dell’iPhone.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Abbonamento palestra")
+        .onAppear {
+            guard savedPaymentTimestamp > 0 else { return }
+            paymentDate = Date(timeIntervalSince1970: savedPaymentTimestamp)
+            months = savedMonths
+        }
+    }
+
+    private func savePayment() {
+        savedPaymentTimestamp = Calendar.autoupdatingCurrent.startOfDay(for: paymentDate).timeIntervalSince1970
+        savedMonths = months
+        GymMembershipReminders.schedule(paymentDate: paymentDate, months: months)
     }
 }
 

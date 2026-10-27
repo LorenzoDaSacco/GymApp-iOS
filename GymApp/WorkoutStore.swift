@@ -113,6 +113,22 @@ final class WorkoutStore: ObservableObject {
         let startOfToday = calendar.startOfDay(for: now)
         calendarClock = now
 
+        // Le spunte valgono soltanto per il giorno in cui la serie è stata eseguita.
+        // Conserviamo carichi, ripetizioni e storico: azzeriamo solo il completamento.
+        var clearedOldCompletions = false
+        for ei in exercises.indices {
+            for si in exercises[ei].sets.indices {
+                let set = exercises[ei].sets[si]
+                guard set.completed,
+                      set.completedAt.map({ !calendar.isDate($0, inSameDayAs: now) }) ?? true else { continue }
+                exercises[ei].sets[si].completed = false
+                exercises[ei].sets[si].completedAt = nil
+                RecoveryNotifications.shared.cancel(for: set.id)
+                clearedOldCompletions = true
+            }
+        }
+        if clearedOldCompletions { persist() }
+
         let markerKey = "gymapp.lastAutoDay.v3"
         let lastMarker = UserDefaults.standard.object(forKey: markerKey) as? Date
         if !force, let lastMarker, calendar.isDate(lastMarker, inSameDayAs: now) { return }
@@ -299,10 +315,19 @@ final class WorkoutStore: ObservableObject {
 
     func effectiveReps(for exercise: Exercise, setIndex: Int) -> String {
         if let value = exercise.sets[safe: setIndex]?.reps, let n = Int(value), n > 0 { return value }
-        let prescribed: String
-        if repetitionMode == .perSet { prescribed = exercise.sets[safe: setIndex]?.prescribedReps ?? exercise.targetReps }
-        else { prescribed = exercise.targetReps }
-        return Self.lowerBoundReps(prescribed)
+        return Self.lowerBoundReps(prescribedReps(for: exercise, setIndex: setIndex))
+    }
+
+    /// La prescrizione della scheda non coincide con le ripetizioni effettive
+    /// registrate in una seduta precedente.
+    func prescribedReps(for exercise: Exercise, setIndex: Int) -> String {
+        repetitionMode == .perSet
+            ? (exercise.sets[safe: setIndex]?.prescribedReps ?? exercise.targetReps)
+            : exercise.targetReps
+    }
+
+    func initialMonitoredReps(for exercise: Exercise, setIndex: Int) -> String {
+        Self.lowerBoundReps(prescribedReps(for: exercise, setIndex: setIndex))
     }
 
     private static func lowerBoundReps(_ value: String) -> String {
