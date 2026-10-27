@@ -386,116 +386,6 @@ def analizza_esercizio(testo):
 
     return nome_pulito, "CORPO LIBERO / ALTRO", "Esercizio generale di tonificazione", "full_body"
 
-# --- MAPPA MUSCOLARE VETTORIALE ---
-from pathlib import Path
-import re
-import base64
-
-MAPPA_SVG = Path(__file__).resolve().parent / "mappa.svg"
-
-TARGET_KEYWORDS = {
-    "chest": ["chest", "pect", "petto"],
-    "back": ["back", "lat", "lats", "dorso"],
-    "shoulders": ["shoulder", "shoulders", "delt", "deltoid", "spalle"],
-    "biceps": ["bicep", "biceps", "bicipiti"],
-    "triceps": ["tricep", "triceps", "tricipiti"],
-    "quads": ["quad", "quads", "quadriceps", "quadricipiti"],
-    "hamstrings": ["hamstring", "hamstrings", "glute", "glutes", "femorali"],
-}
-
-OLD_ID_TO_TARGET = {
-    "muscle-1": "chest", "muscle-2": "chest",
-    "muscle-3": "biceps", "muscle-4": "biceps",
-    "muscle-11": "quads", "muscle-12": "quads",
-    "muscle-17": "back", "muscle-18": "back",
-    "muscle-19": "triceps", "muscle-20": "triceps",
-    "muscle-24": "hamstrings", "muscle-25": "hamstrings",
-    "muscle-26": "hamstrings", "muscle-27": "hamstrings",
-    "muscle-32": "shoulders", "muscle-33": "shoulders",
-    "muscle-34": "shoulders", "muscle-35": "shoulders",
-}
-
-ANATOMY_KEYWORDS = sum(TARGET_KEYWORDS.values(), [])
-
-def _target_keywords(target_muscle):
-    target = str(target_muscle).lower().strip()
-    if target == "back_legs":
-        return TARGET_KEYWORDS["back"] + TARGET_KEYWORDS["hamstrings"]
-    return TARGET_KEYWORDS.get(target, [])
-
-def _is_muscle_tag(tag):
-    return bool(
-        re.search(r'\bid=["\'](?:muscle-\d+|(?:' + '|'.join(map(re.escape, ANATOMY_KEYWORDS)) + r'))[^"\']*["\']', tag, re.I)
-        or re.search(r'\bdata-(?:region|muscle)=', tag, re.I)
-    )
-
-def _matches(tag, target):
-    id_match = re.search(r'\bid=["\']([^"\']+)["\']', tag, re.I)
-    region_match = re.search(r'\bdata-region=["\']([^"\']+)["\']', tag, re.I)
-    muscle_match = re.search(r'\bdata-muscle=["\']([^"\']+)["\']', tag, re.I)
-
-    values = [m.group(1).lower() for m in (id_match, region_match, muscle_match) if m]
-    keywords = _target_keywords(target)
-
-    if id_match:
-        old = OLD_ID_TO_TARGET.get(id_match.group(1).lower())
-        if old:
-            return old == target or (target == "back_legs" and old in ("back", "hamstrings"))
-
-    return bool(keywords) and any(k in v for k in keywords for v in values)
-
-def _style_svg(svg, target):
-    # Tutte le aree muscolari diventano neutre; quelle target diventano rosse.
-    pattern = re.compile(r'<(?:path|polygon|ellipse|rect)\b[^>]*>', re.I)
-
-    def repl(match):
-        tag = match.group(0)
-        if not _is_muscle_tag(tag):
-            return tag
-
-        active = _matches(tag, target)
-        fill = "#ff4757" if active else "#555a70"
-        stroke = "#ffffff" if active else "#303445"
-        sw = "2" if active else "0.5"
-
-        tag = re.sub(r'\s+(?:fill|stroke|stroke-width)=["\'][^"\']*["\']', '', tag, flags=re.I)
-
-        if tag.rstrip().endswith("/>"):
-            return tag[:-2] + f' fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>'
-        return tag[:-1] + f' fill="{fill}" stroke="{stroke}" stroke-width="{sw}">'
-
-    return pattern.sub(repl, svg)
-
-def render_mappa_muscolare(target_muscle):
-    # Render stabile: niente components.html, iframe, JavaScript o CairoSVG.
-    if not MAPPA_SVG.is_file():
-        st.error(f"❌ mappa.svg non trovata: {MAPPA_SVG}")
-        return
-
-    try:
-        svg = MAPPA_SVG.read_text(encoding="utf-8")
-        svg = re.sub(r'<\\?xml[^>]*\\?>', '', svg, flags=re.I)
-        svg = _style_svg(svg, target_muscle)
-        svg = re.sub(r'<script\\b.*?</script>', '', svg, flags=re.I | re.S)
-        svg = re.sub(r'<style\\b.*?</style>', '', svg, flags=re.I | re.S)
-        encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-
-        st.markdown(
-            f'''
-            <div style="width:100%;display:flex;justify-content:center;align-items:center;padding:4px 0 8px;">
-                <img src="data:image/svg+xml;base64,{encoded}"
-                     alt="Mappa muscolare"
-                     style="width:100%;max-width:360px;height:auto;display:block;" />
-            </div>
-            ''',
-            unsafe_allow_html=True
-        )
-    except UnicodeDecodeError:
-        st.error("❌ mappa.svg non è codificata in UTF-8.")
-    except Exception as e:
-        st.error(f"❌ Errore caricando mappa.svg: {e}")
-
-
 # ============================================================
 # GYM TRACKER PRO — PREMIUM UI
 # ============================================================
@@ -1115,7 +1005,6 @@ else:
                             st.rerun()
 
             with right:
-                render_mappa_muscolare(svg_target)
                 st.markdown(
                     f'<div style="text-align:center;color:var(--muted);font-size:12px;margin-top:-4px;">'
                     f'{done_ex}/{total_ex} serie completate</div>',
@@ -1137,7 +1026,7 @@ else:
                     conn.close()
                     st.rerun()
             with b2:
-                st.caption("Target muscolare evidenziato sulla mappa.")
+                st.caption("Progressi della giornata aggiornati nella scheda.")
 
         st.markdown("---")
         r1, r2 = st.columns(2)
