@@ -93,7 +93,7 @@ struct HeartDashboardView: View {
                 Circle()
                     .fill(monitor.connection == .listening ? Color.green : Color.orange)
                     .frame(width: 8, height: 8)
-                Text(monitor.connection.title)
+                Text(monitor.statusTitle)
                     .font(.caption.bold())
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)

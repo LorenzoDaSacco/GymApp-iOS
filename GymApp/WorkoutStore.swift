@@ -212,11 +212,14 @@ final class WorkoutStore: ObservableObject {
         saveSettings(); persist()
     }
 
-    func updateWeight(_ weight: Double, exerciseID: UUID, setID: UUID, saveHistory: Bool = true) {
+    /// `previous`: peso di partenza da confrontare per decidere se creare un punto di storico.
+    /// Serve quando il peso è già stato aggiornato "al volo" nella scheda (sync live) e
+    /// il confronto con il valore corrente nascondrebbe la modifica.
+    func updateWeight(_ weight: Double, exerciseID: UUID, setID: UUID, saveHistory: Bool = true, previous: Double? = nil) {
         guard let ei = exercises.firstIndex(where: { $0.id == exerciseID }),
               let si = exercises[ei].sets.firstIndex(where: { $0.id == setID }) else { return }
         if exercises[ei].sets[si].isBackOff { return }
-        let old = exercises[ei].sets[si].weight
+        let old = previous ?? exercises[ei].sets[si].weight
         guard weight > 0 else { return }
         exercises[ei].sets[si].weight = weight
         if saveHistory && old != weight {
@@ -382,6 +385,18 @@ final class WorkoutStore: ObservableObject {
         exercises[i].day = day; persist()
     }
 
+    /// Riordina un esercizio all'interno della stessa giornata (drag-and-drop).
+    /// Trascinando verso il basso l'esercizio finisce dopo il bersaglio, verso l'alto prima.
+    func reorderExercise(_ exerciseID: UUID, onto targetID: UUID) {
+        guard exerciseID != targetID,
+              let from = exercises.firstIndex(where: { $0.id == exerciseID }),
+              let to = exercises.firstIndex(where: { $0.id == targetID }),
+              exercises[from].day == exercises[to].day else { return }
+        let item = exercises.remove(at: from)
+        exercises.insert(item, at: to)
+        persist()
+    }
+
     func addExercise(day: String, name: String, reps: String, weights: [Double], recovery: String = "", backOffEnabled: Bool = false,
                      manualTarget: MuscleTarget? = nil, perSetReps: [String]? = nil) {
         let r = ExerciseRecognizer.recognize(name)
@@ -470,7 +485,9 @@ final class WorkoutStore: ObservableObject {
 
     var widgetSharingAvailable: Bool { GymShared.defaults() != nil }
     var widgetDiagnostics: String {
-        widgetSharingAvailable ? "App Group accessibile. Verifica i widget nella schermata Home." : "App Group non accessibile. Controlla la firma dell'IPA."
+        widgetSharingAvailable
+            ? "App Group accessibile. Il widget «Apri Gym Tracker Pro» è disponibile dalla schermata Home."
+            : "App Group non accessibile: non serve al widget tasto rapido, che funziona comunque."
     }
 
     func refreshWidgets() { writeWidgetSnapshot(); WidgetCenter.shared.reloadAllTimelines() }
@@ -489,9 +506,6 @@ final class WorkoutStore: ObservableObject {
         GymShared.defaults()?.set(data, forKey: key)
         saveSettings()
         writeWidgetSnapshot()
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadAllTimelines()
-        #endif
     }
 
     private func writeWidgetSnapshot() {

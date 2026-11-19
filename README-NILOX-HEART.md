@@ -48,3 +48,6 @@
 - La lista mostra ID CoreBluetooth di iOS, non indirizzi MAC: non cercare per `FE:51:13:37:C5:FB` nel telefono.
 
 **Limite:** la compilazione iOS e il comportamento del collegamento sul dispositivo devono essere verificati tramite Xcode/GitHub Actions. Il metodo non garantisce campionamento 24/7 in background.
+
+## Altri bracciali (1.3.0)
+Funzionano i dispositivi che espongono il servizio cardiaco standard Bluetooth (180D / caratteristica 2A37, notify o indicate): scegli il bracciale dall'elenco nella scheda Cuore; dopo la prima verifica viene ricordato. Se il bracciale non lo espone, l'app lo segnala: attiva sul bracciale «trasmetti frequenza cardiaca» / «heart rate broadcast». L'app non invia comandi proprietari, quindi i modelli che richiedono il protocollo del produttore non sono supportati.

@@ -17,6 +17,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
 
     enum Connection: Equatable {
         case disabled, bluetoothOff, permissionDenied, searching, connecting, listening, notFound, interrupted, failed
+        case noHeartService, pairingRequired
         var title: String {
             switch self {
             case .disabled: return "Monitoraggio disattivato"
@@ -28,6 +29,8 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
             case .notFound: return "ONAIR non trovato"
             case .interrupted: return "Connessione interrotta · riconnessione…"
             case .failed: return "Impossibile leggere il sensore"
+            case .noHeartService: return "Questo dispositivo non trasmette i battiti in modo standard"
+            case .pairingRequired: return "Accetta l'associazione Bluetooth richiesta da iOS"
             }
         }
     }
@@ -39,6 +42,22 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     @Published private(set) var buckets: [HeartRateBucket] = []
     @Published private(set) var storageError: String?
     @Published private(set) var detectedDevices: [DeviceOption] = []
+    /// Nome del bracciale selezionato/collegato. nil finché non ne è stato scelto uno.
+    @Published private(set) var connectedDeviceName: String?
+
+    /// Etichetta per i messaggi: ONAIR (o nessun dispositivo ancora scelto) lascia i testi originali,
+    /// qualsiasi altro bracciale usa il proprio nome al posto di «ONAIR».
+    private var deviceLabel: String? {
+        guard let name = connectedDeviceName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty, !name.localizedCaseInsensitiveContains("ONAIR") else { return nil }
+        return name
+    }
+    private func neutral(_ text: String) -> String {
+        guard let label = deviceLabel else { return text }
+        return text.replacingOccurrences(of: "ONAIR", with: label)
+    }
+    /// Stato di connessione già adattato al bracciale in uso.
+    var statusTitle: String { neutral(connection.title) }
 
     @Published private(set) var workoutReadings: [WorkoutHeartReading] = []
     @Published private(set) var workoutRecording = false
@@ -58,6 +77,14 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         workoutRecording = true
         lastWorkoutBPMAt = nil
         recoveryAttempts = 0
+        // Senza bracciale (mai collegato e monitoraggio spento) l'allenamento funziona lo stesso:
+        // niente scansione Bluetooth, solo un messaggio informativo al posto dei battiti.
+        let hasBand = enabled || UserDefaults.standard.string(forKey: Self.peripheralKey) != nil
+        guard hasBand else {
+            liveStatus = "Nessun bracciale collegato"
+            workoutDiagnostic = "Nessun bracciale collegato: l'allenamento prosegue senza battiti. Per usarlo, collegalo dalla scheda Cuore."
+            return
+        }
         liveStatus = "Connessione e ricezione BPM in corso…"
         workoutDiagnostic = "Connessione al bracciale in corso…"
         if !enabled { start() } else { connectIfPossible() }
@@ -67,9 +94,9 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
             guard let self, self.workoutRecording, self.workoutStartSequence == sequence,
                   self.workoutReadings.isEmpty else { return }
-            self.workoutDiagnostic = self.connection == .listening
+            self.workoutDiagnostic = self.neutral(self.connection == .listening
                 ? "ONAIR connesso, ma non trasmette BPM. Potrebbe richiedere un comando proprietario."
-                : "ONAIR non sta inviando BPM. Controlla connessione e permessi Bluetooth."
+                : "ONAIR non sta inviando BPM. Controlla connessione e permessi Bluetooth.")
         }
     }
 
@@ -96,7 +123,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
             if fresh {
                 self.liveStatus = "BPM ricevuti dal bracciale"
             } else if self.connection == .listening {
-                self.liveStatus = "ONAIR connesso, ma non invia battiti. Riprovo la ricezione…"
+                self.liveStatus = self.neutral("ONAIR connesso, ma non invia battiti. Riprovo la ricezione…")
                 if self.recoveryAttempts < 3, let device = self.peripheral,
                    device.state == .connected, let characteristic = self.measurementCharacteristic {
                     self.recoveryAttempts += 1
@@ -106,7 +133,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
                     self.liveStatus = "ONAIR connesso ma senza BPM: probabile avvio sensore richiesto dall'app ufficiale"
                 }
             } else {
-                self.liveStatus = "ONAIR non ancora pronto: " + self.connection.title
+                self.liveStatus = self.neutral("ONAIR non ancora pronto: " + self.connection.title)
                 if self.recoveryAttempts < 3 {
                     self.recoveryAttempts += 1
                     self.connectIfPossible()
@@ -121,6 +148,20 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
     private static let restorationID = "com.gymtrackerpro.onair.central.v1"
     private static let serviceID = CBUUID(string: "180D")
     private static let measurementID = CBUUID(string: "2A37")
+
+    /// Servizi presenti praticamente su ogni dispositivo BLE: permettono di elencare anche i bracciali
+    /// già collegati a iOS (ad esempio dall'app del produttore) che non annunciano il servizio cardiaco.
+    private static let commonServiceIDs = ["1800", "1801", "180A", "180F"].map { CBUUID(string: $0) }
+    private static let wearableHints = [
+        "band", "watch", "fit", "amazfit", "zepp", "huawei", "honor", "xiaomi", "redmi", "garmin", "polar",
+        "wahoo", "coospo", "magene", "scosche", "tickr", "whoop", "suunto", "coros", "galaxy", "gear", "oppo",
+        "realme", "oneplus", "withings", "ticwatch", "bip", "gts", "gtr", "hrm", "heart", "pulse", "cardio",
+        "strap", "smart", "mi "
+    ]
+    static func looksLikeWearable(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return wearableHints.contains { lower.contains($0) }
+    }
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -167,6 +208,7 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         stopScanning()
         if let peripheral { central.cancelPeripheralConnection(peripheral) }
         peripheral = nil
+        connectedDeviceName = nil
         UserDefaults.standard.removeObject(forKey: Self.peripheralKey)
         connectIfPossible()
     }
@@ -246,6 +288,10 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         if peripheral?.identifier != device.identifier { measurementCharacteristic = nil }
         peripheral = device
         device.delegate = self
+        let known = [device.name, detectedDevices.first(where: { $0.id == device.identifier })?.name]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty && !$0.hasPrefix("Senza nome") })
+        connectedDeviceName = known ?? "bracciale"
         // Remember only after the standard heart-rate service is actually verified.
     }
 
@@ -276,10 +322,15 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
             let r = $1.name.localizedCaseInsensitiveContains("ONAIR") ? 1 : 0
             if l != r { return l > r }
             if $0.advertisesHeartRate != $1.advertisesHeartRate { return $0.advertisesHeartRate }
+            // In una palestra affollata i bracciali devono salire in cima, prima di TV, beacon e altro.
+            let lw = Self.looksLikeWearable($0.name), rw = Self.looksLikeWearable($1.name)
+            if lw != rw { return lw }
+            let ln = $0.name.hasPrefix("Senza nome"), rn = $1.name.hasPrefix("Senza nome")
+            if ln != rn { return !ln }
             return ($0.rssi ?? -110) > ($1.rssi ?? -110)
         }
-        if detectedDevices.count > 25 {
-            detectedDevices = Array(detectedDevices.prefix(25))
+        if detectedDevices.count > 40 {
+            detectedDevices = Array(detectedDevices.prefix(40))
         }
     }
 
@@ -294,15 +345,24 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
         // iOS can already have a GATT connection to ONAIR through another app.
         // In that case it may stop advertising and never appear in a BLE scan.
         // retrieveConnectedPeripherals finds *system-connected* heart-rate peripherals.
-        for device in central.retrieveConnectedPeripherals(withServices: [Self.serviceID]) {
+        let heartDevices = central.retrieveConnectedPeripherals(withServices: [Self.serviceID])
+        for device in heartDevices {
             recordCandidate(device, advertisedName: nil, rssi: nil,
                             advertisesHeartRate: true, alreadyConnected: true)
-            if (device.name ?? "").localizedCaseInsensitiveContains("ONAIR") {
-                attach(device)
-                connection = .connecting
-                central.connect(device, options: nil)
-                return
-            }
+        }
+        // Qualsiasi altro bracciale già collegato a iOS compare comunque nell'elenco.
+        for device in central.retrieveConnectedPeripherals(withServices: Self.commonServiceIDs) {
+            recordCandidate(device, advertisedName: nil, rssi: nil,
+                            advertisesHeartRate: false, alreadyConnected: true)
+        }
+        // ONAIR ha la precedenza; altrimenti, se iOS ha un solo sensore cardiaco collegato
+        // (il tuo), lo usiamo direttamente. Con più candidati scegli tu dall'elenco.
+        if let onair = heartDevices.first(where: { ($0.name ?? "").localizedCaseInsensitiveContains("ONAIR") })
+            ?? (heartDevices.count == 1 ? heartDevices.first : nil) {
+            attach(onair)
+            connection = .connecting
+            central.connect(onair, options: nil)
+            return
         }
         // This device may not advertise 180D. Scan without a filter while app is open.
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
@@ -377,8 +437,11 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard enabled else { return }
-        guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == Self.serviceID }) else {
-            connection = .failed
+        guard error == nil else { connection = .failed; return }
+        guard let service = peripheral.services?.first(where: { $0.uuid == Self.serviceID }) else {
+            // Il bracciale non espone il servizio cardiaco standard (180D): di solito va attivata
+            // sul bracciale la funzione «trasmetti frequenza cardiaca» / «heart rate broadcast».
+            connection = .noHeartService
             return
         }
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.peripheralKey)
@@ -387,10 +450,11 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard enabled else { return }
-        guard error == nil,
-              let char = service.characteristics?.first(where: { $0.uuid == Self.measurementID }),
-              char.properties.contains(.notify) else {
-            connection = .failed
+        guard error == nil else { connection = .failed; return }
+        // Alcuni bracciali usano indicate invece di notify: sono entrambi validi per 2A37.
+        guard let char = service.characteristics?.first(where: { $0.uuid == Self.measurementID }),
+              char.properties.contains(.notify) || char.properties.contains(.indicate) else {
+            connection = .noHeartService
             return
         }
         measurementCharacteristic = char
@@ -403,7 +467,26 @@ final class HeartRateMonitor: NSObject, ObservableObject, CBCentralManagerDelega
             peripheral.setNotifyValue(true, for: characteristic)
             return
         }
+        if let error = error as NSError?,
+           error.domain == CBATTErrorDomain,
+           error.code == CBATTError.insufficientAuthentication.rawValue
+            || error.code == CBATTError.insufficientEncryption.rawValue {
+            // Il bracciale richiede l'associazione: iOS mostra la richiesta, poi riproviamo.
+            connection = .pairingRequired
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self, self.enabled, self.connection == .pairingRequired,
+                      self.peripheral?.identifier == peripheral.identifier else { return }
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+            return
+        }
         connection = error == nil && characteristic.isNotifying ? .listening : .failed
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        // Alcuni bracciali pubblicano il servizio cardiaco solo dopo l'associazione.
+        guard enabled else { return }
+        peripheral.discoverServices([Self.serviceID])
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {

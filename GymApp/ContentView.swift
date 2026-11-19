@@ -2,6 +2,7 @@ import SwiftUI
 import Charts
 import Combine
 import UserNotifications
+import UniformTypeIdentifiers
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
     case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
@@ -80,12 +81,6 @@ struct ContentView: View {
             .tag(4)
 
             NavigationStack {
-                AddExerciseView(store: store) { selectedTab = 0 }
-            }
-            .tabItem { Label("Aggiungi", systemImage: "plus.circle") }
-            .tag(2)
-
-            NavigationStack {
                 SettingsView(store: store, darkMode: $darkMode, accentColorName: $accentColorName)
             }
             .tabItem { Label("Impostazioni", systemImage: "gearshape") }
@@ -113,6 +108,8 @@ struct DashboardView: View {
     @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     @State private var showingMonitoredWorkout = false
+    @State private var showingAddExercise = false
+    @State private var draggingExerciseID: UUID?
 
     var body: some View {
         ScrollView {
@@ -166,7 +163,7 @@ struct DashboardView: View {
                 Button {
                     showingMonitoredWorkout = true
                 } label: {
-                    Label("Allenamento monitorato", systemImage: "figure.strengthtraining.traditional")
+                    Label("Inizia allenamento", systemImage: "figure.strengthtraining.traditional")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -179,22 +176,66 @@ struct DashboardView: View {
                 } else {
                     ForEach(store.dayExercises) { exercise in
                         ExerciseCard(store: store, exercise: exercise)
+                            // Tieni premuto sull'esercizio per trascinarlo in un'altra posizione.
+                            .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 24))
+                            .onDrag {
+                                draggingExerciseID = exercise.id
+                                return NSItemProvider(object: exercise.id.uuidString as NSString)
+                            }
+                            .onDrop(of: [UTType.plainText], delegate: ExerciseReorderDelegate(
+                                targetID: exercise.id,
+                                dragging: $draggingExerciseID,
+                                reorder: { dragged, target in
+                                    withAnimation(.easeInOut(duration: 0.2)) { store.reorderExercise(dragged, onto: target) }
+                                }
+                            ))
                     }
                 }
             }
             .padding()
         }
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle(store.selectedDay)
         .fullScreenCover(isPresented: $showingMonitoredWorkout) {
             NavigationStack {
                 MonitoredWorkoutView(store: store)
             }
         }
+        .navigationDestination(isPresented: $showingAddExercise) {
+            AddExerciseView(store: store) { showingAddExercise = false }
+        }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { showingAddExercise = true } label: {
+                    Label("Aggiungi", systemImage: "plus.circle")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reset") { store.resetDay() }
             }
         }
+    }
+}
+
+/// Riordino per trascinamento: l'esercizio trascinato si sposta mentre passa sopra gli altri.
+private struct ExerciseReorderDelegate: DropDelegate {
+    let targetID: UUID
+    @Binding var dragging: UUID?
+    let reorder: (UUID, UUID) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { dragging != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged = dragging, dragged != targetID else { return }
+        reorder(dragged, targetID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
     }
 }
 
@@ -244,7 +285,7 @@ struct ExerciseCard: View {
                         .font(.caption.bold()).foregroundStyle(accentColor)
                 }
                 Spacer()
-                ProgressionExerciseMenu(store: store, exerciseID: exercise.id)
+                ProgressionExerciseMenu(store: store, exerciseID: exercise.id, highlighted: true)
                 Button(editing ? "Fine" : "Modifica") {
                     if editing { commitTargetReps() }
                     else {
@@ -305,6 +346,19 @@ struct ExerciseCard: View {
                     }
                 }
                 .tint(accentColor)
+                Toggle(isOn: Binding(
+                    get: { store.progressionEnabled(for: exercise.id) },
+                    set: { enabled in
+                        store.setProgressionEnabled(enabled, for: exercise.id)
+                        if enabled { RecoveryNotifications.shared.requestPermission() }
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Ricordami di progredire").font(.caption.bold())
+                        Text("Ti avviso quando completi tutte le serie raggiungendo le ripetizioni obiettivo").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(accentColor)
             }
 
             HStack(spacing: 10) {
@@ -354,20 +408,25 @@ struct ExerciseCard: View {
 private struct ProgressionExerciseMenu: View {
     @ObservedObject var store: WorkoutStore
     let exerciseID: UUID
+    /// Nella Scheda l'icona è una freccia "progressione" (piena quando il promemoria è attivo);
+    /// nella schermata di allenamento resta l'icona ⋯ originale.
+    var highlighted = false
 
     var body: some View {
+        let enabled = store.progressionEnabled(for: exerciseID)
         Menu {
             Button {
-                let enabled = !store.progressionEnabled(for: exerciseID)
-                store.setProgressionEnabled(enabled, for: exerciseID)
-                if enabled { RecoveryNotifications.shared.requestPermission() }
+                store.setProgressionEnabled(!enabled, for: exerciseID)
+                if !enabled { RecoveryNotifications.shared.requestPermission() }
             } label: {
-                Label("Ricordami di progredire", systemImage: store.progressionEnabled(for: exerciseID) ? "checkmark.circle.fill" : "circle")
+                Label("Ricordami di progredire", systemImage: enabled ? "checkmark.circle.fill" : "circle")
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: highlighted
+                  ? (enabled ? "arrow.up.forward.circle.fill" : "arrow.up.forward.circle")
+                  : "ellipsis.circle")
                 .font(.title3)
-                .accessibilityLabel("Opzioni esercizio")
+                .accessibilityLabel(highlighted ? "Ricordami di progredire" : "Opzioni esercizio")
         }
     }
 }
@@ -523,10 +582,12 @@ struct SetRow: View {
         }
         .contentShape(Rectangle())
         .onAppear { syncDrafts() }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Fine") { focus = nil }
+        .onChange(of: editing) { _, isEditing in
+            // La tastiera non ha più il tasto "Fine" per riga: chiudendo la modifica
+            // della scheda salviamo il valore ancora in digitazione.
+            if !isEditing, focus != nil {
+                commitBeforeToggle()
+                focus = nil
             }
         }
     }
@@ -1069,6 +1130,17 @@ struct MonitoredWorkoutView: View {
 
     private enum MonitoredInput: Hashable { case weight, bodyWeight }
 
+    /// Serie a cui appartiene il peso in digitazione (serve per il sync live con la scheda base).
+    private struct WeightDraftTarget {
+        let exerciseID: UUID
+        let setID: UUID
+        /// Testo caricato dall'app: finché non cambia, nulla viene scritto sulla scheda.
+        let loadedText: String
+        /// Peso della scheda al momento del caricamento (per lo storico).
+        var baseline: Double
+    }
+    @State private var weightTarget: WeightDraftTarget?
+
     private var current: Exercise? {
         guard let session, session.orderedIDs.indices.contains(session.currentIndex) else { return nil }
         return store.exercises.first { $0.id == session.orderedIDs[session.currentIndex] }
@@ -1227,7 +1299,7 @@ struct MonitoredWorkoutView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("YOUR TRAINING")
                             .font(.caption.bold()).tracking(2.5).foregroundStyle(accentColor)
-                        Text("Allenamento monitorato")
+                        Text("Inizia allenamento")
                             .font(.system(size: 29, weight: .heavy, design: .rounded))
                         HStack {
                             Text("Peso corporeo (kg)")
@@ -1387,8 +1459,13 @@ struct MonitoredWorkoutView: View {
             }
         }
         .onAppear { restore() }
+        .onDisappear { commitWeightEdit() }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
         .onChange(of: current?.id) { _, _ in loadDraft() }
+        .onChange(of: weightDraft) { _, _ in liveSyncWeight() }
+        .onChange(of: focusedInput) { oldFocus, newFocus in
+            if oldFocus == .weight && newFocus != .weight { commitWeightEdit() }
+        }
     }
 
     private func monitorMetric(_ title: String, _ value: String, _ icon: String) -> some View {
@@ -1431,6 +1508,7 @@ struct MonitoredWorkoutView: View {
         persistSession()
     }
     private func pause() {
+        commitWeightEdit()
         guard var s = session, s.pausedAt == nil else { return }
         let date = Date()
         if let start = s.exerciseStartedAt {
@@ -1452,10 +1530,38 @@ struct MonitoredWorkoutView: View {
     }
     private func loadDraft() {
         guard let exercise = current, let set = exercise.sets.first(where: { !$0.completed }) else {
-            weightDraft = ""; repsDraft = ""; return
+            weightDraft = ""; repsDraft = ""; weightTarget = nil; return
         }
-        weightDraft = String(format: "%.1f", set.weight)
+        let loadedText = String(format: "%.1f", set.weight)
+        weightTarget = WeightDraftTarget(exerciseID: exercise.id, setID: set.id,
+                                         loadedText: loadedText, baseline: set.weight)
+        weightDraft = loadedText
         repsDraft = store.initialMonitoredReps(for: exercise, setIndex: exercise.sets.firstIndex(where: { $0.id == set.id }) ?? 0)
+    }
+
+    private func parsedDraftWeight() -> Double? {
+        let raw = weightDraft
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Double(raw), value > 0 else { return nil }
+        return value
+    }
+
+    /// Mentre digiti, la scheda base si aggiorna subito (senza creare punti di storico).
+    private func liveSyncWeight() {
+        guard focusedInput == .weight, let target = weightTarget,
+              weightDraft != target.loadedText, let value = parsedDraftWeight() else { return }
+        store.updateWeight(value, exerciseID: target.exerciseID, setID: target.setID, saveHistory: false)
+    }
+
+    /// Conferma il peso modificato (uscita dal campo, cambio esercizio, chiusura della schermata,
+    /// pausa): la scheda base è già allineata, qui si registra lo storico se il valore è cambiato.
+    private func commitWeightEdit() {
+        guard let target = weightTarget, weightDraft != target.loadedText,
+              let value = parsedDraftWeight() else { return }
+        store.updateWeight(value, exerciseID: target.exerciseID, setID: target.setID, previous: target.baseline)
+        weightTarget = WeightDraftTarget(exerciseID: target.exerciseID, setID: target.setID,
+                                         loadedText: weightDraft, baseline: value)
     }
     private func complete(set: WorkoutSet, exercise: Exercise) {
         focusedInput = nil
@@ -1465,7 +1571,9 @@ struct MonitoredWorkoutView: View {
             message = "Controlla peso e ripetizioni"
             return
         }
-        store.updateWeight(weight, exerciseID: exercise.id, setID: set.id)
+        store.updateWeight(weight, exerciseID: exercise.id, setID: set.id,
+                           previous: weightTarget?.setID == set.id ? weightTarget?.baseline : nil)
+        weightTarget = nil
         store.setReps(String(reps), exerciseID: exercise.id, setID: set.id)
         store.toggle(exercise.id, setID: set.id)
         if var s = session {
@@ -1498,6 +1606,7 @@ struct MonitoredWorkoutView: View {
     }
 
     private func switchTo(_ index: Int) {
+        commitWeightEdit()
         guard var s = session, s.orderedIDs.indices.contains(index) else { return }
         closeActivitySegment(&s, at: Date())
         s.currentIndex = index
@@ -1839,7 +1948,7 @@ struct SettingsView: View {
 
             Section("Promemoria progressione") {
                 Label("La progressione si gestisce in ogni esercizio", systemImage: "arrow.up.forward")
-                Text("Apri il menu ⋯ del singolo esercizio, nella Scheda o durante l'Allenamento monitorato, per attivare Ricordami di progredire. Il nuovo carico lo scegli tu.")
+                Text("Nella Scheda tocca la freccia ↑ dell'esercizio (oppure attiva «Ricordami di progredire» in Modifica); durante «Inizia allenamento» usa il menu ⋯. Il nuovo carico lo scegli tu.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -1850,15 +1959,15 @@ struct SettingsView: View {
                 Button { store.refreshWidgets() } label: {
                     Label("Sincronizza i widget", systemImage: "arrow.triangle.2.circlepath")
                 }
-                Text("Se il contenitore condiviso non è disponibile, la causa è probabilmente la firma dell'IPA/App Group: SideStore non può correggerla dalla sola app. Non eliminare l'app per tentare la riparazione.")
+                Text("Il widget «Apri Gym Tracker Pro» è un tasto rapido che apre l'app: non legge dati condivisi e non richiede l'App Group. Il contenitore condiviso resta solo come diagnostica.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Allenamento monitorato") {
+            Section("Inizia allenamento") {
                 NavigationLink("Avvia allenamento e calcolo calorie") {
                     MonitoredWorkoutView(store: store)
                 }
-                Text("Registra i BPM ricevuti dal Nilox, il grafico e le calorie attive stimate per la sessione.")
+                Text("Registra i BPM ricevuti dal bracciale, il grafico e le calorie attive stimate per la sessione. Funziona anche senza bracciale.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
