@@ -1,5 +1,11 @@
 # CHANGELOG — GymApp-iOS
 
+## 1.3.1 (build 15) — 2026-11-20
+Correzioni su richiesta (HUD e grafica invariati, tranne i 2 fix):
+1. Drag-and-drop: sostituito `onDrag/onDrop` (che spostava solo un'anteprima di sistema) con un gesto tieni-premuto+trascina che muove la card reale su e giù, con riordino in tempo reale, scroll automatico vicino al bordo alto/basso e vibrazione al "sollevamento". Ordine salvato a ogni scambio.
+2. Progressione: rimosso dalla Scheda il vecchio controllo (menu/icona) e l'interruttore in Modifica; aggiunto un pulsante dedicato a tutta larghezza sotto l'intestazione della card (acceso/spento ben distinguibili). Il menu ⋯ della schermata «Inizia allenamento» è invariato. Testo in Impostazioni aggiornato.
+Altro: versione 1.3.0 (14) → 1.3.1 (15). Non verificato: compilazione Xcode e prova su dispositivo.
+
 ## 1.3.0 (build 14) — 2026-11-18
 Richieste utente (8 modifiche, HUD e grafica invariati):
 1. Drag-and-drop: pressione prolungata su un esercizio per riordinarlo nella giornata (salvato).

@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 import Combine
 import UserNotifications
-import UniformTypeIdentifiers
+import UIKit
 
 enum AccentColorOption: String, CaseIterable, Identifiable {
     case purple, blue, green, orange, red, pink, teal, yellow, indigo, mint
@@ -109,7 +109,8 @@ struct DashboardView: View {
     @ObservedObject var store: WorkoutStore
     @State private var showingMonitoredWorkout = false
     @State private var showingAddExercise = false
-    @State private var draggingExerciseID: UUID?
+    @State private var dragController = ExerciseDragController()
+    @State private var cardHeights: [UUID: CGFloat] = [:]
 
     var body: some View {
         ScrollView {
@@ -175,24 +176,19 @@ struct DashboardView: View {
                     EmptyDayView()
                 } else {
                     ForEach(store.dayExercises) { exercise in
-                        ExerciseCard(store: store, exercise: exercise)
-                            // Tieni premuto sull'esercizio per trascinarlo in un'altra posizione.
-                            .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 24))
-                            .onDrag {
-                                draggingExerciseID = exercise.id
-                                return NSItemProvider(object: exercise.id.uuidString as NSString)
-                            }
-                            .onDrop(of: [UTType.plainText], delegate: ExerciseReorderDelegate(
-                                targetID: exercise.id,
-                                dragging: $draggingExerciseID,
-                                reorder: { dragged, target in
-                                    withAnimation(.easeInOut(duration: 0.2)) { store.reorderExercise(dragged, onto: target) }
-                                }
-                            ))
+                        // Tieni premuto sulla card per trascinarla (su e giù) in un'altra posizione.
+                        ReorderableExerciseCard(store: store, exercise: exercise,
+                                                controller: dragController, heights: cardHeights)
                     }
                 }
             }
             .padding()
+            .background(ScrollViewFinder(controller: dragController))
+            .onPreferenceChange(ExerciseCardHeightKey.self) { cardHeights = $0 }
+        }
+        .scrollDisabled(dragController.draggingID != nil)
+        .onAppear {
+            dragController.animate = { change in withAnimation(.easeInOut(duration: 0.2)) { change() } }
         }
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle(store.selectedDay)
@@ -218,24 +214,230 @@ struct DashboardView: View {
     }
 }
 
-/// Riordino per trascinamento: l'esercizio trascinato si sposta mentre passa sopra gli altri.
-private struct ExerciseReorderDelegate: DropDelegate {
-    let targetID: UUID
-    @Binding var dragging: UUID?
-    let reorder: (UUID, UUID) -> Void
+// MARK: - Riordino esercizi: trascinamento della card reale con scroll automatico
 
-    func validateDrop(info: DropInfo) -> Bool { dragging != nil }
+private struct ExerciseCardHeightKey: PreferenceKey {
+    static var defaultValue: [UUID: CGFloat] = [:]
+    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
 
-    func dropEntered(info: DropInfo) {
-        guard let dragged = dragging, dragged != targetID else { return }
-        reorder(dragged, targetID)
+/// Stato del trascinamento: la card reale segue il dito, le altre si spostano e,
+/// vicino al bordo alto/basso, la schermata scorre da sola.
+@MainActor @Observable
+final class ExerciseDragController {
+    private(set) var draggingID: UUID?
+    private(set) var dragOffset: CGFloat = 0
+
+    @ObservationIgnored weak var scrollView: UIScrollView?
+    @ObservationIgnored var animate: (() -> Void) -> Void = { change in change() }
+    @ObservationIgnored private var store: WorkoutStore?
+    @ObservationIgnored private var heights: [UUID: CGFloat] = [:]
+    @ObservationIgnored private var startFingerY: CGFloat?
+    @ObservationIgnored private var fingerY: CGFloat = 0
+    @ObservationIgnored private var startScrollY: CGFloat = 0
+    /// Spostamento già "assorbito" dagli scambi di posizione, per tenere la card sotto il dito.
+    @ObservationIgnored private var appliedShift: CGFloat = 0
+    @ObservationIgnored private var ticker: ScrollTicker?
+    private let spacing: CGFloat = 16
+
+    func begin(id: UUID, store: WorkoutStore, heights: [UUID: CGFloat]) {
+        guard draggingID == nil else { return }
+        self.store = store
+        self.heights = heights
+        startFingerY = nil
+        appliedShift = 0
+        startScrollY = scrollView?.contentOffset.y ?? 0
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        animate {
+            self.draggingID = id
+            self.dragOffset = 0
+        }
+        let newTicker = ScrollTicker { [weak self] dt in self?.autoScrollStep(dt) }
+        newTicker.start()
+        ticker = newTicker
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func move(fingerY y: CGFloat, startY: CGFloat) {
+        guard draggingID != nil else { return }
+        if startFingerY == nil { startFingerY = startY }
+        fingerY = y
+        recompute()
+    }
 
-    func performDrop(info: DropInfo) -> Bool {
-        dragging = nil
-        return true
+    func end(id: UUID? = nil) {
+        guard let current = draggingID, id == nil || id == current else { return }
+        ticker?.stop()
+        ticker = nil
+        store = nil
+        startFingerY = nil
+        animate {
+            self.draggingID = nil
+            self.dragOffset = 0
+        }
+    }
+
+    /// Calcola lo spostamento della card e scambia la posizione quando supera il centro di una vicina.
+    private func recompute() {
+        guard let id = draggingID, let store, let startY = startFingerY else { return }
+        let scrolled = (scrollView?.contentOffset.y ?? startScrollY) - startScrollY
+        var offset = (fingerY - startY) + scrolled - appliedShift
+        var order = store.dayExercises.map(\.id)
+        guard var index = order.firstIndex(of: id), let ownHeight = heights[id] else {
+            dragOffset = offset
+            return
+        }
+        var moves: [(UUID, UUID)] = []
+        while index + 1 < order.count, let nextHeight = heights[order[index + 1]],
+              offset > ownHeight / 2 + spacing + nextHeight / 2 {
+            let shift = nextHeight + spacing
+            moves.append((id, order[index + 1]))
+            order.swapAt(index, index + 1)
+            index += 1
+            offset -= shift
+            appliedShift += shift
+        }
+        while index > 0, let previousHeight = heights[order[index - 1]],
+              offset < -(ownHeight / 2 + spacing + previousHeight / 2) {
+            let shift = previousHeight + spacing
+            moves.append((id, order[index - 1]))
+            order.swapAt(index, index - 1)
+            index -= 1
+            offset += shift
+            appliedShift -= shift
+        }
+        if moves.isEmpty {
+            dragOffset = offset
+        } else {
+            animate {
+                for (dragged, target) in moves { store.reorderExercise(dragged, onto: target) }
+                self.dragOffset = offset
+            }
+        }
+    }
+
+    /// Scroll automatico: più il dito è vicino al bordo alto/basso, più la schermata scorre veloce.
+    private func autoScrollStep(_ dt: CFTimeInterval) {
+        guard draggingID != nil, startFingerY != nil, let sv = scrollView else { return }
+        let frame = sv.convert(sv.bounds, to: nil)
+        let inset = sv.adjustedContentInset
+        let top = frame.minY + inset.top
+        let bottom = frame.maxY - inset.bottom
+        let zone: CGFloat = 90
+        let maxSpeed: CGFloat = 900
+        var velocity: CGFloat = 0
+        if fingerY < top + zone {
+            velocity = -maxSpeed * min(1, (top + zone - fingerY) / zone)
+        } else if fingerY > bottom - zone {
+            velocity = maxSpeed * min(1, (fingerY - (bottom - zone)) / zone)
+        }
+        guard velocity != 0 else { return }
+        let minY = -inset.top
+        let maxY = max(minY, sv.contentSize.height - sv.bounds.height + inset.bottom)
+        let newY = min(max(sv.contentOffset.y + velocity * CGFloat(dt), minY), maxY)
+        guard newY != sv.contentOffset.y else { return }
+        sv.contentOffset.y = newY
+        recompute()
+    }
+}
+
+private final class ScrollTicker: NSObject {
+    private var link: CADisplayLink?
+    private let onTick: (CFTimeInterval) -> Void
+
+    init(onTick: @escaping (CFTimeInterval) -> Void) {
+        self.onTick = onTick
+        super.init()
+    }
+
+    func start() {
+        let newLink = CADisplayLink(target: self, selector: #selector(step(_:)))
+        newLink.add(to: .main, forMode: .common)
+        link = newLink
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func step(_ displayLink: CADisplayLink) {
+        onTick(displayLink.targetTimestamp - displayLink.timestamp)
+    }
+}
+
+/// Trova lo UIScrollView che contiene la schermata (serve per lo scroll automatico).
+private final class ScrollFinderView: UIView {
+    var onFound: ((UIScrollView) -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        var candidate = superview
+        while let view = candidate {
+            if let scrollView = view as? UIScrollView {
+                onFound?(scrollView)
+                return
+            }
+            candidate = view.superview
+        }
+    }
+}
+
+private struct ScrollViewFinder: UIViewRepresentable {
+    let controller: ExerciseDragController
+
+    func makeUIView(context: Context) -> ScrollFinderView {
+        let view = ScrollFinderView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.onFound = { [weak controller] scrollView in controller?.scrollView = scrollView }
+        return view
+    }
+
+    func updateUIView(_ uiView: ScrollFinderView, context: Context) {}
+}
+
+/// La card dell'esercizio con il gesto "tieni premuto e trascina": si muove la card reale.
+private struct ReorderableExerciseCard: View {
+    let store: WorkoutStore
+    let exercise: Exercise
+    let controller: ExerciseDragController
+    let heights: [UUID: CGFloat]
+    @GestureState private var gestureActive = false
+
+    var body: some View {
+        let isDragging = controller.draggingID == exercise.id
+        ExerciseCard(store: store, exercise: exercise)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: ExerciseCardHeightKey.self,
+                                           value: [exercise.id: proxy.size.height])
+                }
+            )
+            .scaleEffect(isDragging ? 1.02 : 1)
+            .offset(y: isDragging ? controller.dragOffset : 0)
+            .zIndex(isDragging ? 1 : 0)
+            .gesture(reorderGesture)
+            .onChange(of: gestureActive) { _, active in
+                if !active { controller.end(id: exercise.id) }
+            }
+    }
+
+    private var reorderGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .updating($gestureActive) { _, state, _ in state = true }
+            .onChanged { value in
+                if case .second(true, let drag) = value {
+                    controller.begin(id: exercise.id, store: store, heights: heights)
+                    if let drag {
+                        controller.move(fingerY: drag.location.y, startY: drag.startLocation.y)
+                    }
+                }
+            }
+            .onEnded { _ in controller.end(id: exercise.id) }
     }
 }
 
@@ -285,7 +487,6 @@ struct ExerciseCard: View {
                         .font(.caption.bold()).foregroundStyle(accentColor)
                 }
                 Spacer()
-                ProgressionExerciseMenu(store: store, exerciseID: exercise.id, highlighted: true)
                 Button(editing ? "Fine" : "Modifica") {
                     if editing { commitTargetReps() }
                     else {
@@ -294,6 +495,8 @@ struct ExerciseCard: View {
                     editing.toggle()
                 }
             }
+
+            ProgressionReminderButton(store: store, exerciseID: exercise.id)
 
             if store.hasPendingProgression(for: exercise.id) {
                 HStack(spacing: 12) {
@@ -346,19 +549,6 @@ struct ExerciseCard: View {
                     }
                 }
                 .tint(accentColor)
-                Toggle(isOn: Binding(
-                    get: { store.progressionEnabled(for: exercise.id) },
-                    set: { enabled in
-                        store.setProgressionEnabled(enabled, for: exercise.id)
-                        if enabled { RecoveryNotifications.shared.requestPermission() }
-                    }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Ricordami di progredire").font(.caption.bold())
-                        Text("Ti avviso quando completi tutte le serie raggiungendo le ripetizioni obiettivo").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .tint(accentColor)
             }
 
             HStack(spacing: 10) {
@@ -405,28 +595,53 @@ struct ExerciseCard: View {
     }
 }
 
-private struct ProgressionExerciseMenu: View {
+/// Pulsante dedicato della Scheda: attiva/disattiva il promemoria "Ricordami di progredire".
+private struct ProgressionReminderButton: View {
+    @Environment(\.gymAccentColor) private var accentColor
     @ObservedObject var store: WorkoutStore
     let exerciseID: UUID
-    /// Nella Scheda l'icona è una freccia "progressione" (piena quando il promemoria è attivo);
-    /// nella schermata di allenamento resta l'icona ⋯ originale.
-    var highlighted = false
 
     var body: some View {
         let enabled = store.progressionEnabled(for: exerciseID)
+        let button = Button {
+            store.setProgressionEnabled(!enabled, for: exerciseID)
+            if !enabled { RecoveryNotifications.shared.requestPermission() }
+        } label: {
+            Label(enabled ? "Promemoria progressione attivo" : "Ricordami di progredire",
+                  systemImage: enabled ? "arrow.up.forward.circle.fill" : "arrow.up.forward.circle")
+                .font(.subheadline.bold())
+                .frame(maxWidth: .infinity)
+        }
+        // Attivo = pieno (colore accento), non attivo = contorno chiaro: lo stato si legge a colpo d'occhio.
+        Group {
+            if enabled {
+                button.buttonStyle(.borderedProminent)
+            } else {
+                button.buttonStyle(.bordered)
+            }
+        }
+        .tint(accentColor)
+        .accessibilityHint("Ti avviso quando completi tutte le serie raggiungendo le ripetizioni obiettivo")
+    }
+}
+
+private struct ProgressionExerciseMenu: View {
+    @ObservedObject var store: WorkoutStore
+    let exerciseID: UUID
+
+    var body: some View {
         Menu {
             Button {
-                store.setProgressionEnabled(!enabled, for: exerciseID)
-                if !enabled { RecoveryNotifications.shared.requestPermission() }
+                let enabled = !store.progressionEnabled(for: exerciseID)
+                store.setProgressionEnabled(enabled, for: exerciseID)
+                if enabled { RecoveryNotifications.shared.requestPermission() }
             } label: {
-                Label("Ricordami di progredire", systemImage: enabled ? "checkmark.circle.fill" : "circle")
+                Label("Ricordami di progredire", systemImage: store.progressionEnabled(for: exerciseID) ? "checkmark.circle.fill" : "circle")
             }
         } label: {
-            Image(systemName: highlighted
-                  ? (enabled ? "arrow.up.forward.circle.fill" : "arrow.up.forward.circle")
-                  : "ellipsis.circle")
+            Image(systemName: "ellipsis.circle")
                 .font(.title3)
-                .accessibilityLabel(highlighted ? "Ricordami di progredire" : "Opzioni esercizio")
+                .accessibilityLabel("Opzioni esercizio")
         }
     }
 }
@@ -1948,7 +2163,7 @@ struct SettingsView: View {
 
             Section("Promemoria progressione") {
                 Label("La progressione si gestisce in ogni esercizio", systemImage: "arrow.up.forward")
-                Text("Nella Scheda tocca la freccia ↑ dell'esercizio (oppure attiva «Ricordami di progredire» in Modifica); durante «Inizia allenamento» usa il menu ⋯. Il nuovo carico lo scegli tu.")
+                Text("Nella Scheda usa il pulsante «Ricordami di progredire» sotto il titolo dell'esercizio; durante «Inizia allenamento» usa il menu ⋯. Il nuovo carico lo scegli tu.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
