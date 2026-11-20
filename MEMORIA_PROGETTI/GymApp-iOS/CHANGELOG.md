@@ -1,5 +1,11 @@
 # CHANGELOG — GymApp-iOS
 
+## 1.3.2 (build 16) — 2026-11-20
+Correzioni nella schermata Scheda (HUD e resto invariati):
+1. Scroll: il gesto SwiftUI LongPress+Drag, che interferiva con lo scorrimento verticale, è sostituito da un long-press nativo UIKit sullo UIScrollView. Lo scroll di sistema ha priorità; il drag parte solo dopo 0,35 s di pressione ferma su una card. Rimossa la PreferenceKey delle altezze (ora lette dalle viste-àncora delle card).
+2. Indicatore di destinazione: durante il drag, nello slot esatto in cui verrà rilasciata la card compare un riquadro corallo tratteggiato con riempimento leggero, che si aggiorna in tempo reale; la card trascinata ha anche una leggera ombra.
+Versione 1.3.1 (15) → 1.3.2 (16). Non verificato: compilazione Xcode e prova su dispositivo.
+
 ## 1.3.1 (build 15) — 2026-11-20
 Correzioni su richiesta (HUD e grafica invariati, tranne i 2 fix):
 1. Drag-and-drop: sostituito `onDrag/onDrop` (che spostava solo un'anteprima di sistema) con un gesto tieni-premuto+trascina che muove la card reale su e giù, con riordino in tempo reale, scroll automatico vicino al bordo alto/basso e vibrazione al "sollevamento". Ordine salvato a ogni scambio.

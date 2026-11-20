@@ -5,6 +5,10 @@ Richieste dell'utente (non perderle, non alterarle). Stato aggiornato al 2026-11
 ## Regola permanente
 - Invarianza totale di HUD, layout visivo e grafica esistenti.
 
+## Correzioni richieste il 2026-11-20 (secondo giro, Scheda)
+C. Scroll verticale fluido e prioritario; drag attivo solo dopo il long-press. — IMPLEMENTATA in 1.3.2 (da testare)
+D. Indicatore visivo di destinazione del drop (corallo, tempo reale). — IMPLEMENTATA in 1.3.2 (da testare)
+
 ## Correzioni richieste il 2026-11-20 (invarianza HUD/grafica, tranne i 2 fix)
 A. Drag & drop: tenendo premuto si trascina la card reale (non una mini-anteprima) in qualsiasi posizione su/giù, con scroll automatico vicino al bordo alto/basso. — IMPLEMENTATA in 1.3.1 (da testare)
 B. Progressione: rimuovere il vecchio controllo e inserire un pulsante dedicato, chiaro e ben visibile, in un punto più comodo. — IMPLEMENTATA in 1.3.1 (da testare); il menu ⋯ in «Inizia allenamento» resta, da decidere

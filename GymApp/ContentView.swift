@@ -110,7 +110,6 @@ struct DashboardView: View {
     @State private var showingMonitoredWorkout = false
     @State private var showingAddExercise = false
     @State private var dragController = ExerciseDragController()
-    @State private var cardHeights: [UUID: CGFloat] = [:]
 
     var body: some View {
         ScrollView {
@@ -178,16 +177,16 @@ struct DashboardView: View {
                     ForEach(store.dayExercises) { exercise in
                         // Tieni premuto sulla card per trascinarla (su e giù) in un'altra posizione.
                         ReorderableExerciseCard(store: store, exercise: exercise,
-                                                controller: dragController, heights: cardHeights)
+                                                controller: dragController)
                     }
                 }
             }
             .padding()
             .background(ScrollViewFinder(controller: dragController))
-            .onPreferenceChange(ExerciseCardHeightKey.self) { cardHeights = $0 }
         }
         .scrollDisabled(dragController.draggingID != nil)
         .onAppear {
+            dragController.store = store
             dragController.animate = { change in withAnimation(.easeInOut(duration: 0.2)) { change() } }
         }
         .scrollDismissesKeyboard(.interactively)
@@ -216,24 +215,23 @@ struct DashboardView: View {
 
 // MARK: - Riordino esercizi: trascinamento della card reale con scroll automatico
 
-private struct ExerciseCardHeightKey: PreferenceKey {
-    static var defaultValue: [UUID: CGFloat] = [:]
-    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
-
 /// Stato del trascinamento: la card reale segue il dito, le altre si spostano e,
 /// vicino al bordo alto/basso, la schermata scorre da sola.
+/// Il long-press è un riconoscitore UIKit nativo installato sullo UIScrollView:
+/// finché il dito si muove prima del long-press vince lo scroll di sistema, quindi
+/// lo scorrimento verticale resta fluido; il drag parte solo dopo la pressione prolungata.
 @MainActor @Observable
 final class ExerciseDragController {
     private(set) var draggingID: UUID?
     private(set) var dragOffset: CGFloat = 0
 
-    @ObservationIgnored weak var scrollView: UIScrollView?
+    @ObservationIgnored weak var store: WorkoutStore?
     @ObservationIgnored var animate: (() -> Void) -> Void = { change in change() }
-    @ObservationIgnored private var store: WorkoutStore?
-    @ObservationIgnored private var heights: [UUID: CGFloat] = [:]
+    @ObservationIgnored private weak var scrollView: UIScrollView?
+    @ObservationIgnored private var recognizer: UILongPressGestureRecognizer?
+    @ObservationIgnored private var proxy: ReorderGestureProxy?
+    @ObservationIgnored private var anchors: [UUID: WeakAnchor] = [:]
+    @ObservationIgnored private var draggedHeight: CGFloat = 0
     @ObservationIgnored private var startFingerY: CGFloat?
     @ObservationIgnored private var fingerY: CGFloat = 0
     @ObservationIgnored private var startScrollY: CGFloat = 0
@@ -242,11 +240,53 @@ final class ExerciseDragController {
     @ObservationIgnored private var ticker: ScrollTicker?
     private let spacing: CGFloat = 16
 
-    func begin(id: UUID, store: WorkoutStore, heights: [UUID: CGFloat]) {
-        guard draggingID == nil else { return }
-        self.store = store
-        self.heights = heights
-        startFingerY = nil
+    private struct WeakAnchor { weak var view: UIView? }
+
+    // MARK: Collegamento con UIKit
+
+    /// Installa (una sola volta) il riconoscitore di long-press sullo UIScrollView della schermata.
+    func attach(to scrollView: UIScrollView) {
+        if self.scrollView === scrollView, recognizer != nil { return }
+        if let old = recognizer { old.view?.removeGestureRecognizer(old) }
+        let newProxy = ReorderGestureProxy(controller: self)
+        let newRecognizer = UILongPressGestureRecognizer(target: newProxy,
+                                                         action: #selector(ReorderGestureProxy.handle(_:)))
+        newRecognizer.minimumPressDuration = 0.35
+        newRecognizer.allowableMovement = 10
+        newRecognizer.delegate = newProxy
+        scrollView.addGestureRecognizer(newRecognizer)
+        self.scrollView = scrollView
+        self.proxy = newProxy
+        self.recognizer = newRecognizer
+    }
+
+    /// Ogni card registra qui la propria vista (sfondo trasparente) per sapere dov'è sullo schermo.
+    func register(id: UUID, view: UIView) {
+        anchors[id] = WeakAnchor(view: view)
+    }
+
+    /// Card che si trova sotto il punto indicato (coordinate finestra), se c'è.
+    func cardID(at windowPoint: CGPoint) -> UUID? {
+        let visible = Set(store?.dayExercises.map(\.id) ?? [])
+        for (id, anchor) in anchors where visible.contains(id) {
+            guard let view = anchor.view, view.window != nil else { continue }
+            if view.convert(view.bounds, to: nil).contains(windowPoint) { return id }
+        }
+        return nil
+    }
+
+    private func height(of id: UUID) -> CGFloat? {
+        guard let h = anchors[id]?.view?.bounds.height, h > 0 else { return nil }
+        return h
+    }
+
+    // MARK: Ciclo del trascinamento
+
+    func begin(id: UUID, fingerY y: CGFloat) {
+        guard draggingID == nil, store != nil, let ownHeight = height(of: id) else { return }
+        draggedHeight = ownHeight
+        startFingerY = y
+        fingerY = y
         appliedShift = 0
         startScrollY = scrollView?.contentOffset.y ?? 0
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -259,18 +299,16 @@ final class ExerciseDragController {
         ticker = newTicker
     }
 
-    func move(fingerY y: CGFloat, startY: CGFloat) {
+    func move(fingerY y: CGFloat) {
         guard draggingID != nil else { return }
-        if startFingerY == nil { startFingerY = startY }
         fingerY = y
         recompute()
     }
 
-    func end(id: UUID? = nil) {
-        guard let current = draggingID, id == nil || id == current else { return }
+    func end() {
+        guard draggingID != nil else { return }
         ticker?.stop()
         ticker = nil
-        store = nil
         startFingerY = nil
         animate {
             self.draggingID = nil
@@ -284,12 +322,13 @@ final class ExerciseDragController {
         let scrolled = (scrollView?.contentOffset.y ?? startScrollY) - startScrollY
         var offset = (fingerY - startY) + scrolled - appliedShift
         var order = store.dayExercises.map(\.id)
-        guard var index = order.firstIndex(of: id), let ownHeight = heights[id] else {
+        guard var index = order.firstIndex(of: id) else {
             dragOffset = offset
             return
         }
+        let ownHeight = draggedHeight
         var moves: [(UUID, UUID)] = []
-        while index + 1 < order.count, let nextHeight = heights[order[index + 1]],
+        while index + 1 < order.count, let nextHeight = height(of: order[index + 1]),
               offset > ownHeight / 2 + spacing + nextHeight / 2 {
             let shift = nextHeight + spacing
             moves.append((id, order[index + 1]))
@@ -298,7 +337,7 @@ final class ExerciseDragController {
             offset -= shift
             appliedShift += shift
         }
-        while index > 0, let previousHeight = heights[order[index - 1]],
+        while index > 0, let previousHeight = height(of: order[index - 1]),
               offset < -(ownHeight / 2 + spacing + previousHeight / 2) {
             let shift = previousHeight + spacing
             moves.append((id, order[index - 1]))
@@ -342,6 +381,43 @@ final class ExerciseDragController {
     }
 }
 
+/// Riceve il long-press nativo: parte solo se il dito è fermo su una card per 0,35 s;
+/// se invece il dito si muove prima, il riconoscitore fallisce e scorre la pagina.
+@MainActor
+private final class ReorderGestureProxy: NSObject, UIGestureRecognizerDelegate {
+    private weak var controller: ExerciseDragController?
+
+    init(controller: ExerciseDragController) {
+        self.controller = controller
+        super.init()
+    }
+
+    @objc func handle(_ recognizer: UILongPressGestureRecognizer) {
+        guard let controller else { return }
+        let point = recognizer.location(in: nil)
+        switch recognizer.state {
+        case .began:
+            if let id = controller.cardID(at: point) { controller.begin(id: id, fingerY: point.y) }
+        case .changed:
+            controller.move(fingerY: point.y)
+        case .ended, .cancelled, .failed:
+            controller.end()
+        default:
+            break
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let controller, controller.draggingID == nil else { return false }
+        return controller.cardID(at: gestureRecognizer.location(in: nil)) != nil
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        false
+    }
+}
+
 private final class ScrollTicker: NSObject {
     private var link: CADisplayLink?
     private let onTick: (CFTimeInterval) -> Void
@@ -367,7 +443,7 @@ private final class ScrollTicker: NSObject {
     }
 }
 
-/// Trova lo UIScrollView che contiene la schermata (serve per lo scroll automatico).
+/// Trova lo UIScrollView che contiene la schermata (serve per lo scroll automatico e il long-press).
 private final class ScrollFinderView: UIView {
     var onFound: ((UIScrollView) -> Void)?
 
@@ -392,52 +468,71 @@ private struct ScrollViewFinder: UIViewRepresentable {
         let view = ScrollFinderView()
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
-        view.onFound = { [weak controller] scrollView in controller?.scrollView = scrollView }
+        view.onFound = { [weak controller] scrollView in controller?.attach(to: scrollView) }
         return view
     }
 
     func updateUIView(_ uiView: ScrollFinderView, context: Context) {}
 }
 
-/// La card dell'esercizio con il gesto "tieni premuto e trascina": si muove la card reale.
+/// Vista trasparente dietro ogni card: permette al controller di sapere dove si trova sullo schermo.
+private struct ExerciseCardAnchor: UIViewRepresentable {
+    let id: UUID
+    let controller: ExerciseDragController
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        controller.register(id: id, view: view)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        controller.register(id: id, view: uiView)
+    }
+}
+
+/// Indicatore di destinazione: riquadro corallo tratteggiato nello slot esatto in cui
+/// la card verrà rilasciata. Si sposta in tempo reale insieme agli scambi di posizione.
+private struct DropSlotIndicator: View {
+    private let coral = Color(red: 1.0, green: 0.42, blue: 0.38)
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 32)
+            .fill(coral.opacity(0.16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 32)
+                    .strokeBorder(coral, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [12, 8]))
+            )
+            .padding(-8)
+            .allowsHitTesting(false)
+    }
+}
+
+/// La card dell'esercizio: tenendo premuto si trascina la card reale. Lo slot di destinazione
+/// resta evidenziato sotto la card mentre si muove il dito.
 private struct ReorderableExerciseCard: View {
     let store: WorkoutStore
     let exercise: Exercise
     let controller: ExerciseDragController
-    let heights: [UUID: CGFloat]
-    @GestureState private var gestureActive = false
 
     var body: some View {
         let isDragging = controller.draggingID == exercise.id
-        ExerciseCard(store: store, exercise: exercise)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: ExerciseCardHeightKey.self,
-                                           value: [exercise.id: proxy.size.height])
-                }
-            )
-            .scaleEffect(isDragging ? 1.02 : 1)
-            .offset(y: isDragging ? controller.dragOffset : 0)
-            .zIndex(isDragging ? 1 : 0)
-            .gesture(reorderGesture)
-            .onChange(of: gestureActive) { _, active in
-                if !active { controller.end(id: exercise.id) }
+        VStack(spacing: 0) {
+            ExerciseCard(store: store, exercise: exercise)
+                .background(ExerciseCardAnchor(id: exercise.id, controller: controller))
+                .scaleEffect(isDragging ? 1.02 : 1)
+                .shadow(color: isDragging ? Color.black.opacity(0.28) : Color.clear,
+                        radius: isDragging ? 16 : 0, y: isDragging ? 8 : 0)
+                .offset(y: isDragging ? controller.dragOffset : 0)
+        }
+        .background {
+            if isDragging {
+                DropSlotIndicator().transition(.opacity)
             }
-    }
-
-    private var reorderGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($gestureActive) { _, state, _ in state = true }
-            .onChanged { value in
-                if case .second(true, let drag) = value {
-                    controller.begin(id: exercise.id, store: store, heights: heights)
-                    if let drag {
-                        controller.move(fingerY: drag.location.y, startY: drag.startLocation.y)
-                    }
-                }
-            }
-            .onEnded { _ in controller.end(id: exercise.id) }
+        }
+        .zIndex(isDragging ? 1 : 0)
     }
 }
 

@@ -28,6 +28,9 @@ L'IPA generato da GitHub Actions è **non firmato**. Il widget «Apri Gym Tracke
 
 Vedi [README-NILOX-HEART.md](README-NILOX-HEART.md) per istruzioni, limitazioni sul background iOS e gestione dei dati. La nuova funzione è nella scheda **Cuore**; lo storico viene salvato separatamente dagli allenamenti.
 
+## Novità 1.3.2
+Scheda: scorrimento verticale fluido (il riordino usa un long-press nativo e parte solo dopo la pressione prolungata) e indicatore corallo tratteggiato che mostra dove verrà rilasciata la card.
+
 ## Novità 1.3.1
 Riordino esercizi: tenendo premuto si trascina la card reale (su e giù) con scroll automatico vicino al bordo alto/basso. Progressione: nella Scheda il vecchio controllo è sostituito da un pulsante dedicato «Ricordami di progredire» sotto il titolo di ogni card.
 

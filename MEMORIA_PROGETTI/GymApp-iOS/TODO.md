@@ -2,6 +2,7 @@
 
 ## Da fare subito (verifica su build reale)
 - [ ] Lanciare il workflow GitHub "Build GymApp iOS" e correggere eventuali errori di compilazione (il codice non è stato compilato qui).
+- [ ] Test su iPhone (1.3.2) — scorrimento verticale della Scheda fluido (anche partendo il dito sopra le card); il drag parte solo dopo pressione ferma ~0,35 s; durante il drag compare il riquadro corallo tratteggiato nello slot di destinazione e si sposta mentre muovi il dito.
 - [ ] Test su iPhone — drag-and-drop (1.3.1): tieni premuto ~0,35 s su una card (non su un pulsante), la card reale si solleva e segue il dito; portala dall'ultima alla prima posizione e viceversa; avvicinati al bordo alto/basso e verifica lo scroll automatico; rilascia e riavvia l'app per verificare che l'ordine resti. Verifica anche che lo scroll normale e i tap sui pulsanti/campi funzionino come prima.
 - [ ] Test su iPhone — sync peso: "Inizia allenamento" → modifica il peso → Chiudi/indietro senza "Completa serie" → il peso nella Scheda è aggiornato; controlla che lo storico (Progressi) abbia un solo punto per la modifica.
 - [ ] Test — "Aggiungi" in alto nella Scheda: aggiungi un esercizio e verifica ritorno alla Scheda sul giorno scelto.
